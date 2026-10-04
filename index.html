@@ -110,6 +110,15 @@
 
     <!-- 分析結果區域 -->
     <div id="resultCard" class="hidden bg-white rounded-2xl shadow-sm border border-slate-200/80 overflow-hidden">
+      <div class="px-4 py-2.5 flex items-center justify-between gap-2">
+        <button id="btnResultHeader" class="min-w-0 text-left flex-1">
+          <p class="text-[10px] font-semibold text-indigo-600">分析結果</p>
+          <p id="resultTitle" class="text-sm font-bold text-slate-800 truncate"></p>
+        </button>
+        <button id="btnToggleResult" class="shrink-0 px-2.5 py-1 bg-slate-100 text-slate-700 text-xs rounded-lg border border-slate-300 active:scale-95">▼ 顯示</button>
+        <button id="btnCloseResult" class="shrink-0 px-2 text-slate-400 hover:text-slate-600 text-lg font-bold" title="關閉">&times;</button>
+      </div>
+      <div id="resultBody" class="hidden border-t border-slate-200">
       <div class="flex border-b border-slate-200 bg-slate-50/50">
         <button id="tabSummary" class="flex-1 py-3 text-sm font-semibold text-indigo-600 border-b-2 border-indigo-600">結構化摘要</button>
         <button id="tabTranscript" class="flex-1 py-3 text-sm font-semibold text-slate-500 border-b-2 border-transparent hover:text-slate-700">多語言逐字稿</button>
@@ -124,6 +133,7 @@
         <button id="btnCopyResult" class="px-3 py-1.5 bg-white border border-slate-300 text-slate-700 text-xs font-medium rounded-lg hover:bg-slate-50 active:scale-95 transition-all">📋 複製內容</button>
         <button id="btnDownloadMd" class="px-3 py-1.5 bg-white border border-slate-300 text-slate-700 text-xs font-medium rounded-lg hover:bg-slate-50 active:scale-95 transition-all">💾 下載</button>
         <button id="btnShareResult" class="px-3 py-1.5 bg-indigo-600 text-white text-xs font-medium rounded-lg hover:bg-indigo-700 active:scale-95 transition-all">📤 分享</button>
+      </div>
       </div>
     </div>
 
@@ -221,6 +231,32 @@
       <div class="flex justify-end gap-2 pt-2">
         <button id="btnCloseSettings" class="px-3 py-1.5 text-xs text-slate-600">取消</button>
         <button id="btnSaveApiKey" class="px-4 py-1.5 bg-indigo-600 text-white text-xs font-medium rounded-lg">儲存設定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 彈出視窗：重新分析（可重選範本） -->
+  <div id="reanalyzeModal" class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-sm w-full p-5 shadow-xl space-y-3">
+      <div class="flex justify-between items-start gap-2">
+        <div>
+          <h3 class="font-bold text-slate-800 text-base">🔁 重新分析</h3>
+          <p id="reanalyzeTitle" class="text-[11px] text-slate-500"></p>
+        </div>
+        <button id="btnCloseReanalyze" class="text-slate-400 hover:text-slate-600 text-lg font-bold">&times;</button>
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-slate-500 mb-1">摘要範本</label>
+        <select id="reTemplateSelect" class="w-full bg-slate-50 border border-slate-300 text-slate-800 text-sm rounded-xl p-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none"></select>
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-slate-500 mb-1">說話者身分提示（選填）</label>
+        <input type="text" id="reSpeakerInput" class="w-full bg-slate-50 border border-slate-300 text-slate-800 text-sm rounded-xl p-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+      </div>
+      <p class="text-[10px] text-slate-400">使用同一段錄音重新送 Gemini 分析，會取代這筆紀錄原本的摘要與逐字稿。</p>
+      <div class="flex justify-end gap-2">
+        <button id="btnCancelReanalyze" class="px-3 py-1.5 text-xs text-slate-600">取消</button>
+        <button id="btnStartReanalyze" class="px-4 py-1.5 bg-indigo-600 text-white text-xs font-medium rounded-lg">開始分析</button>
       </div>
     </div>
   </div>
@@ -803,7 +839,7 @@
       processingId = id;
       let rec = await updateRecord(id, { status: 'processing', error: '' });
       renderHistory();
-      document.getElementById('resultCard').classList.add('hidden');
+      if (currentResultRec?.id === id) closeResult();
 
       const maxRetries = getRetryCount();
       let lastErr = null;
@@ -820,7 +856,8 @@
             const rawText = await callGemini(audio, mimeType, rec, apiKey);
             const { summary, transcript } = parseResult(rawText);
             rec = await updateRecord(id, { status: 'done', summary, transcript, error: '', attempts: (rec.attempts || 0) + attempt + 1, processedAt: Date.now() });
-            showResult(rec);
+            showResult(rec, { expand: false });
+            toast('分析完成，按「▼ 顯示」查看結果');
             lastErr = null;
             break;
           } catch (err) {
@@ -967,16 +1004,80 @@
       return { summary, transcript };
     }
 
-    function showResult(rec) {
+    // expand=false：分析完成後只顯示標題列，內容預設收起
+    function showResult(rec, { expand = true } = {}) {
       currentResultRec = rec;
       fullFinalResponse = { summary: rec.summary || '', transcript: rec.transcript || '' };
 
       document.getElementById('summaryContent').innerHTML = marked.parse(fullFinalResponse.summary);
       document.getElementById('transcriptContent').textContent = fullFinalResponse.transcript || '（未產出分離逐字稿）';
+      document.getElementById('resultTitle').textContent = `${formatDateTime(rec.createdAt)} · ${rec.templateName || ''}`;
 
       document.getElementById('resultCard').classList.remove('hidden');
       switchTab('summary');
-      document.getElementById('resultCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      setResultExpanded(expand);
+      document.getElementById('resultCard').scrollIntoView({ behavior: 'smooth', block: expand ? 'start' : 'nearest' });
+    }
+
+    function isResultExpanded() {
+      return !document.getElementById('resultCard').classList.contains('hidden') && !document.getElementById('resultBody').classList.contains('hidden');
+    }
+
+    function setResultExpanded(expand) {
+      document.getElementById('resultBody').classList.toggle('hidden', !expand);
+      document.getElementById('btnToggleResult').textContent = expand ? '▲ 隱藏' : '▼ 顯示';
+      renderHistory();
+    }
+
+    function closeResult() {
+      document.getElementById('resultCard').classList.add('hidden');
+      currentResultRec = null;
+      renderHistory();
+    }
+
+    // 暫存紀錄的「查看」：同一筆已展開就收起，否則展開
+    function toggleResultFor(rec) {
+      if (currentResultRec?.id === rec.id && isResultExpanded()) setResultExpanded(false);
+      else showResult(rec, { expand: true });
+    }
+
+    // ===================== 重新分析（可重選範本） =====================
+    let reanalyzeId = null;
+
+    async function openReanalyzeModal(id) {
+      const rec = await getRecord(id);
+      if (!rec) return;
+      reanalyzeId = id;
+      const select = document.getElementById('reTemplateSelect');
+      select.innerHTML = '';
+      templates.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = t.id;
+        opt.textContent = t.name;
+        select.appendChild(opt);
+      });
+      select.value = templates.some(t => t.id === rec.templateId) ? rec.templateId : getSelectedTemplate().id;
+      document.getElementById('reSpeakerInput').value = rec.speakerHint ?? (templates.find(t => t.id === select.value)?.speakerHint || '');
+      document.getElementById('reanalyzeTitle').textContent = `${formatDateTime(rec.createdAt)} · ${formatDuration(rec.durationSec || 0)}`;
+      document.getElementById('reanalyzeModal').classList.remove('hidden');
+    }
+
+    function closeReanalyzeModal() {
+      document.getElementById('reanalyzeModal').classList.add('hidden');
+      reanalyzeId = null;
+    }
+
+    async function startReanalyze() {
+      const id = reanalyzeId;
+      if (!id) return;
+      const tpl = templates.find(t => t.id === document.getElementById('reTemplateSelect').value) || templates[0];
+      await updateRecord(id, {
+        templateId: tpl.id,
+        templateName: tpl.name,
+        speakerHint: document.getElementById('reSpeakerInput').value.trim()
+      });
+      closeReanalyzeModal();
+      processRecording(id);
     }
 
     function blobToBase64(blob) {
@@ -1101,8 +1202,8 @@
             b.addEventListener('click', onClick);
             actions.appendChild(b);
           };
-          if (rec.status === 'done') addBtn('📄 查看', () => showResult(rec), true);
-          if (rec.status !== 'processing') addBtn(rec.status === 'done' ? '🔁 重新分析' : '🔁 重試分析', () => processRecording(rec.id), rec.status !== 'done');
+          if (rec.status === 'done') addBtn(currentResultRec?.id === rec.id && isResultExpanded() ? '🙈 隱藏' : '📄 查看', () => toggleResultFor(rec), true);
+          if (rec.status !== 'processing') addBtn(rec.status === 'done' ? '🔁 重新分析' : '🔁 重試分析', () => openReanalyzeModal(rec.id), rec.status !== 'done');
           addBtn('📤 分享', () => openShareModal(rec.id));
           addBtn('⬇️ 音檔', () => downloadAudio(rec.id));
           addBtn('⬇️ 文字', () => downloadText(rec.id));
@@ -1129,7 +1230,7 @@
     async function removeRecording(id) {
       if (!confirm('確定刪除這筆錄音與文字？（本機刪除，無法復原）')) return;
       await deleteRecordingData(id);
-      if (currentResultRec?.id === id) document.getElementById('resultCard').classList.add('hidden');
+      if (currentResultRec?.id === id) closeResult();
       renderHistory();
       updateStorageInfo();
     }
@@ -1520,6 +1621,16 @@
 
       document.getElementById('btnDownloadMd').addEventListener('click', () => {
         if (currentResultRec) downloadText(currentResultRec.id);
+      });
+      document.getElementById('btnToggleResult').addEventListener('click', () => setResultExpanded(!isResultExpanded()));
+      document.getElementById('btnResultHeader').addEventListener('click', () => setResultExpanded(!isResultExpanded()));
+      document.getElementById('btnCloseResult').addEventListener('click', closeResult);
+      document.getElementById('btnCloseReanalyze').addEventListener('click', closeReanalyzeModal);
+      document.getElementById('btnCancelReanalyze').addEventListener('click', closeReanalyzeModal);
+      document.getElementById('btnStartReanalyze').addEventListener('click', startReanalyze);
+      document.getElementById('reTemplateSelect').addEventListener('change', (e) => {
+        const t = templates.find(t => t.id === e.target.value);
+        if (t) document.getElementById('reSpeakerInput').value = t.speakerHint || '';
       });
       document.getElementById('btnShareResult').addEventListener('click', () => {
         if (currentResultRec) openShareModal(currentResultRec.id);
