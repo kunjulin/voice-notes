@@ -239,6 +239,14 @@
         </div>
       </div>
 
+      <div class="border-t border-slate-200 pt-4 space-y-2">
+        <h3 class="font-bold text-slate-800 text-base">🩺 裝置相容性檢測</h3>
+        <p class="text-[10px] text-slate-400">錄音 5 秒（請對手機說話），檢查錄音、即時暫存、MP3 轉檔、即時辨識是否在此裝置正常；不會呼叫 Gemini。</p>
+        <button id="btnRunDiag" class="w-full px-3 py-1.5 bg-emerald-600 text-white text-xs font-medium rounded-lg">開始檢測</button>
+        <div id="diagOutput" class="hidden text-[11px] leading-relaxed bg-slate-50 border border-slate-200 rounded-lg p-2 space-y-0.5 break-words"></div>
+        <button id="btnCopyDiag" class="hidden w-full px-3 py-1.5 bg-white border border-slate-300 text-slate-700 text-xs rounded-lg">📋 複製檢測結果</button>
+      </div>
+
       <div class="flex justify-end gap-2 pt-2">
         <button id="btnCloseSettings" class="px-3 py-1.5 text-xs text-slate-600">取消</button>
         <button id="btnSaveApiKey" class="px-4 py-1.5 bg-indigo-600 text-white text-xs font-medium rounded-lg">儲存設定</button>
@@ -298,6 +306,17 @@
     const INLINE_LIMIT_BYTES = 14 * 1024 * 1024; // 超過則改走 Gemini Files API（inline 請求上限約 20MB，base64 會膨脹 1/3）
     const RETRY_DELAYS = [3, 8, 20, 45, 90];
     const MP3_SAMPLE_RATE = 16000;
+    const MP3_MAX_SECONDS = 90 * 60;
+
+    // iOS 切到背景時頁面可能被凍結或回收：先把緩衝片段寫入
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden' && isRecording) flushChunks();
+      if (document.visibilityState === 'visible' && isRecording && mediaRecorder?.state === 'inactive') {
+        toast('錄音已被系統停止，已自動儲存');
+        stopRecording();
+      }
+    });
+    window.addEventListener('pagehide', () => { if (isRecording) flushChunks(); });
 
     window.addEventListener('DOMContentLoaded', async () => {
       loadTemplates();
@@ -516,6 +535,15 @@
           if (e.data && e.data.size > 0) pendingChunks.push(e.data);
         };
 
+        // iOS：來電、Siri、切換 App 或鎖定螢幕可能讓系統收回麥克風，此時立即收尾存檔
+        const track = stream.getAudioTracks()[0];
+        if (track) track.addEventListener('ended', () => {
+          if (isRecording) { toast('麥克風被系統中斷，已自動儲存錄音'); stopRecording(); }
+        });
+        mediaRecorder.onerror = () => {
+          if (isRecording) { toast('錄音發生錯誤，已自動儲存'); stopRecording(); }
+        };
+
         mediaRecorder.start(1000);
         flushInterval = setInterval(flushChunks, 3000);
         isRecording = true;
@@ -546,9 +574,14 @@
 
       const rec = currentRec;
       const recorder = mediaRecorder;
-      const stopped = new Promise(resolve => { recorder.onstop = resolve; });
-      try { recorder.stop(); } catch (e) {}
-      await stopped;
+      if (recorder.state !== 'inactive') {
+        const stopped = new Promise(resolve => {
+          recorder.onstop = resolve;
+          setTimeout(resolve, 5000); // 保險：iOS 偶爾不觸發 onstop
+        });
+        try { recorder.stop(); } catch (e) {}
+        await stopped;
+      }
       recorder.stream.getTracks().forEach(track => track.stop());
 
       await flushChunks();
@@ -668,7 +701,10 @@
     async function convertAndBackup(id) {
       let rec = await getRecord(id);
       if (!rec) return;
-      if (rec.mp3Status !== 'done') {
+      if (rec.mp3Status !== 'done' && (rec.durationSec || 0) > MP3_MAX_SECONDS) {
+        // 超長錄音在 iPhone 上解碼成 PCM 可能耗盡記憶體，直接使用原始 m4a
+        rec = await updateRecord(id, { mp3Status: 'skipped', mp3Error: '錄音超過 90 分鐘，保留原始檔不轉 MP3' });
+      } else if (rec.mp3Status !== 'done') {
         setLoading(true, '正在轉換 MP3...', '原始錄音已暫存於本機');
         try {
           const orig = await getBlob(`${id}:orig`);
@@ -1173,6 +1209,107 @@
       return lines.join('\n');
     }
 
+    // ===================== 裝置相容性檢測 =====================
+    async function runDiagnostics() {
+      if (isRecording) { alert('錄音中無法檢測'); return; }
+      const out = document.getElementById('diagOutput');
+      const btn = document.getElementById('btnRunDiag');
+      out.innerHTML = '';
+      out.classList.remove('hidden');
+      document.getElementById('btnCopyDiag').classList.add('hidden');
+      btn.disabled = true;
+      const log = (ok, label, detail = '') => {
+        const p = document.createElement('p');
+        p.textContent = `${ok === true ? '✅' : ok === false ? '❌' : '⚠️'} ${label}${detail ? '：' + detail : ''}`;
+        out.appendChild(p);
+      };
+
+      try {
+        const ua = navigator.userAgent;
+        const ios = (ua.match(/OS (\d+)_(\d+)/) || []).slice(1).join('.');
+        const standalone = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
+        log(null, '裝置', ios ? `iOS ${ios}` : ua.slice(0, 80));
+        log(standalone ? true : null, '執行模式', standalone ? '主畫面 App' : '瀏覽器分頁（建議加入主畫面，避免 Safari 清除本機資料）');
+        log(window.isSecureContext, 'HTTPS 安全環境');
+
+        if (typeof MediaRecorder === 'undefined') { log(false, 'MediaRecorder', '不支援，無法錄音'); return; }
+        const mime = MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : (MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '');
+        log(!!mime, '錄音格式', mime || '無支援格式');
+
+        // IndexedDB Blob 讀寫
+        try {
+          const key = 'diag:test';
+          await putBlob(key, new Blob([new Uint8Array([1, 2, 3])], { type: 'application/octet-stream' }));
+          const b = await getBlob(key);
+          await idb('blobs', 'readwrite', s => s.delete(key));
+          log(b?.size === 3, '本機暫存 (IndexedDB Blob)');
+        } catch (e) { log(false, '本機暫存 (IndexedDB Blob)', e.message); }
+
+        // 實際錄音 5 秒，同時開啟即時辨識，確認兩者並存時錄音不中斷
+        log(null, '錄音測試', '請對手機說話 5 秒...');
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+        const chunks = [];
+        let chunksBeforeStop = 0;
+        rec.ondataavailable = e => { if (e.data?.size) chunks.push(e.data); };
+
+        let srResults = 0, srError = '', srText = '';
+        const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+        let sr = null;
+        if (SR) {
+          try {
+            sr = new SR();
+            sr.lang = 'zh-TW'; sr.continuous = true; sr.interimResults = true;
+            sr.onresult = ev => { srResults++; srText = ev.results[ev.results.length - 1][0].transcript; };
+            sr.onerror = ev => { srError = ev.error; };
+            sr.start();
+          } catch (e) { srError = e.message; }
+        }
+
+        rec.start(1000);
+        await new Promise(r => setTimeout(r, 5000));
+        chunksBeforeStop = chunks.length;
+        const trackLive = stream.getAudioTracks()[0]?.readyState === 'live';
+        const stopped = new Promise(r => { rec.onstop = r; setTimeout(r, 5000); });
+        rec.stop();
+        await stopped;
+        if (sr) try { sr.stop(); } catch (e) {}
+        stream.getTracks().forEach(t => t.stop());
+
+        const blob = new Blob(chunks, { type: rec.mimeType || mime });
+        log(blob.size > 0 && trackLive, '錄音', `${formatBytes(blob.size)}，麥克風${trackLive ? '全程正常' : '途中被中斷'}`);
+        log(chunksBeforeStop >= 3 ? true : null, '每秒即時暫存',
+          chunksBeforeStop >= 3 ? `停止前已收到 ${chunksBeforeStop} 個片段` : `停止前只收到 ${chunksBeforeStop} 個片段（當機時可能無法完整復原）`);
+        if (!SR) log(null, '即時辨識', '此瀏覽器不支援（不影響錄音與 Gemini 分析）');
+        else log(srResults > 0 ? true : null, '即時辨識', srResults > 0 ? `正常（「${srText.slice(0, 20)}」）` : `沒有辨識結果${srError ? '（' + srError + '）' : ''}；請確認已開啟 Siri 與聽寫`);
+
+        // MP3 轉檔
+        try {
+          const t0 = performance.now();
+          const mp3 = await encodeMp3(blob);
+          const sec = ((performance.now() - t0) / 1000).toFixed(1);
+          log(mp3.size > 0, 'MP3 轉檔', `${formatBytes(blob.size)} → ${formatBytes(mp3.size)}，耗時 ${sec}s`);
+          const a = document.createElement('audio');
+          a.controls = true; a.src = URL.createObjectURL(mp3); a.className = 'w-full mt-1';
+          out.appendChild(a);
+        } catch (e) { log(false, 'MP3 轉檔', `${e.message || e}（會改送原始檔，不影響使用）`); }
+
+        log('wakeLock' in navigator ? true : null, '防止螢幕自動鎖定', 'wakeLock' in navigator ? '支援' : '不支援；長時間錄音請手動把自動鎖定設為「永不」');
+        try {
+          const persisted = navigator.storage?.persisted ? await navigator.storage.persisted() : false;
+          const est = navigator.storage?.estimate ? await navigator.storage.estimate() : null;
+          log(persisted ? true : null, '本機資料保存', `${persisted ? '已鎖定保存' : '未鎖定（可能被系統清除）'}${est ? `，可用 ${formatBytes(est.quota)}` : ''}`);
+        } catch (e) {}
+        log(!!localStorage.getItem('gemini_api_key'), 'Gemini API Key', localStorage.getItem('gemini_api_key') ? '已設定' : '未設定');
+        log(null, '檢測完成', '請點播放鍵確認 MP3 有聲音');
+      } catch (e) {
+        log(false, '檢測中斷', e.message || String(e));
+      } finally {
+        btn.disabled = false;
+        document.getElementById('btnCopyDiag').classList.remove('hidden');
+      }
+    }
+
     // ===================== 工具函式 =====================
     function setLoading(show, title, detail) {
       document.getElementById('loadingIndicator').classList.toggle('hidden', !show);
@@ -1357,6 +1494,10 @@
       document.getElementById('btnOdConnect').addEventListener('click', () => {
         saveSettingsFromForm();
         odConnect();
+      });
+      document.getElementById('btnRunDiag').addEventListener('click', runDiagnostics);
+      document.getElementById('btnCopyDiag').addEventListener('click', () => {
+        navigator.clipboard.writeText(document.getElementById('diagOutput').innerText).then(() => toast('已複製檢測結果'));
       });
       document.getElementById('btnOdDisconnect').addEventListener('click', () => {
         localStorage.removeItem('od_tokens');
