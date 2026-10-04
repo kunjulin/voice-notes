@@ -10,6 +10,8 @@
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <!-- lamejs 用於瀏覽器端 MP3 編碼 -->
   <script src="https://cdn.jsdelivr.net/npm/lamejs@1.2.1/lame.min.js"></script>
+  <!-- Google Identity Services：Google Drive 授權 -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
   <style>
     body {
       padding-top: env(safe-area-inset-top);
@@ -210,32 +212,26 @@
 
       <div class="border-t border-slate-200 pt-4 space-y-3">
         <div class="flex justify-between items-center">
-          <h3 class="font-bold text-slate-800 text-base">☁️ OneDrive 備份</h3>
-          <span id="odStatus" class="text-[10px] text-slate-400">未連結</span>
+          <h3 class="font-bold text-slate-800 text-base">☁️ Google Drive 備份</h3>
+          <span id="gdStatus" class="text-[10px] text-slate-400">未連結</span>
         </div>
         <div>
-          <label class="block text-xs font-semibold text-slate-500 mb-1">應用程式 (Client) ID</label>
-          <input type="text" id="odClientIdInput" placeholder="Azure / Entra 應用程式註冊的 Client ID" class="w-full bg-slate-50 border border-slate-300 text-sm rounded-xl p-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+          <label class="block text-xs font-semibold text-slate-500 mb-1">OAuth 用戶端 ID</label>
+          <input type="text" id="gdClientIdInput" placeholder="xxxx.apps.googleusercontent.com" class="w-full bg-slate-50 border border-slate-300 text-sm rounded-xl p-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none">
         </div>
-        <div class="grid grid-cols-2 gap-2">
-          <div>
-            <label class="block text-xs font-semibold text-slate-500 mb-1">Tenant</label>
-            <input type="text" id="odTenantInput" placeholder="common" class="w-full bg-slate-50 border border-slate-300 text-sm rounded-xl p-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none">
-          </div>
-          <div>
-            <label class="block text-xs font-semibold text-slate-500 mb-1">資料夾</label>
-            <input type="text" id="odFolderInput" placeholder="VoiceNotes" class="w-full bg-slate-50 border border-slate-300 text-sm rounded-xl p-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none">
-          </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-500 mb-1">資料夾名稱（放在「我的雲端硬碟」根目錄）</label>
+          <input type="text" id="gdFolderInput" placeholder="VoiceNotes" class="w-full bg-slate-50 border border-slate-300 text-sm rounded-xl p-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none">
         </div>
         <label class="flex items-center gap-2 text-xs text-slate-600">
-          <input type="checkbox" id="odAutoInput" class="rounded"> 錄音結束後自動上傳 MP3 與文字
+          <input type="checkbox" id="gdAutoInput" class="rounded"> 錄音結束後自動上傳 MP3 與文字
         </label>
         <p class="text-[10px] text-slate-400 leading-relaxed">
-          Entra 應用程式註冊：平台選「單頁應用程式 (SPA)」，Redirect URI 填 <span id="odRedirectHint" class="font-mono break-all"></span>，委派權限 Files.ReadWrite、offline_access。個人帳號 tenant 用 consumers，院內 M365 填組織 tenant ID。
+          Google Cloud Console：啟用 Google Drive API → 設定 OAuth 同意畫面（測試使用者加入自己的 Gmail）→ 建立 OAuth 用戶端 ID（網頁應用程式），「已授權的 JavaScript 來源」填 <span id="gdOriginHint" class="font-mono break-all"></span>。只使用 drive.file 權限：App 只能看到自己建立的檔案。
         </p>
         <div class="flex gap-2">
-          <button id="btnOdConnect" class="flex-1 px-3 py-1.5 bg-sky-600 text-white text-xs font-medium rounded-lg">連結 OneDrive</button>
-          <button id="btnOdDisconnect" class="px-3 py-1.5 bg-slate-100 text-slate-600 text-xs rounded-lg border border-slate-300">中斷連結</button>
+          <button id="btnGdConnect" class="flex-1 px-3 py-1.5 bg-sky-600 text-white text-xs font-medium rounded-lg">連結 Google Drive</button>
+          <button id="btnGdDisconnect" class="px-3 py-1.5 bg-slate-100 text-slate-600 text-xs rounded-lg border border-slate-300">中斷連結</button>
         </div>
       </div>
 
@@ -369,7 +365,7 @@
     window.addEventListener('DOMContentLoaded', async () => {
       loadTemplates();
       setupUIEventListeners();
-      await handleOneDriveRedirect();
+      ['od_tokens', 'od_client_id', 'od_tenant', 'od_folder', 'od_auto'].forEach(k => localStorage.removeItem(k)); // 移除舊版 OneDrive 設定
       await recoverInterruptedRecordings();
       renderHistory();
       requestPersistentStorage();
@@ -781,7 +777,7 @@
         renderHistory();
         updateStorageInfo();
       }
-      if (odSettings().auto && odIsConnected()) {
+      if (gdSettings().auto && gdIsConnected()) {
         await backupToCloud(id, { silent: true });
       }
     }
@@ -853,7 +849,7 @@
       if (lastErr) {
         await updateRecord(id, { status: 'failed', error: lastErr.message || String(lastErr) });
         toast('分析失敗，錄音已暫存，可在「暫存紀錄」按重新分析');
-      } else if (odSettings().auto && odIsConnected()) {
+      } else if (gdSettings().auto && gdIsConnected()) {
         backupToCloud(id, { silent: true, textOnly: true });
       }
       renderHistory();
@@ -999,143 +995,168 @@
       });
     }
 
-    // ===================== OneDrive（Microsoft Graph, OAuth2 PKCE） =====================
-    function odSettings() {
+    // ===================== Google Drive（Google Identity Services + Drive API v3） =====================
+    // 只用 drive.file：App 只能存取自己建立的檔案與資料夾。存取權杖約 1 小時有效、無 refresh token，
+    // 過期後需使用者點按（iOS 只允許手勢觸發彈窗）重新取得。
+    const GD_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+    const GD_MULTIPART_LIMIT = 5 * 1024 * 1024;
+
+    function gdSettings() {
       return {
-        clientId: localStorage.getItem('od_client_id') || '',
-        tenant: localStorage.getItem('od_tenant') || 'common',
-        folder: (localStorage.getItem('od_folder') || 'VoiceNotes').replace(/^\/+|\/+$/g, ''),
-        auto: localStorage.getItem('od_auto') === '1'
+        clientId: localStorage.getItem('gd_client_id') || '',
+        folder: (localStorage.getItem('gd_folder') || 'VoiceNotes').trim() || 'VoiceNotes',
+        auto: localStorage.getItem('gd_auto') === '1'
       };
     }
 
-    function odRedirectUri() {
-      return location.origin + location.pathname;
+    function gdIsConnected() {
+      return localStorage.getItem('gd_linked') === '1';
     }
 
-    function odGetTokens() {
-      try { return JSON.parse(localStorage.getItem('od_tokens') || 'null'); } catch (e) { return null; }
+    function gdValidToken() {
+      try {
+        const t = JSON.parse(localStorage.getItem('gd_token') || 'null');
+        return t && Date.now() < t.expires_at ? t.access_token : null;
+      } catch (e) { return null; }
     }
 
-    function odIsConnected() {
-      return !!odGetTokens()?.refresh_token;
-    }
-
-    function base64Url(bytes) {
-      return btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-    }
-
-    async function odConnect() {
-      const { clientId, tenant } = odSettings();
-      if (!clientId) { alert('請先填入 OneDrive Client ID 並儲存設定'); return; }
-      const verifier = base64Url(crypto.getRandomValues(new Uint8Array(48)));
-      const challenge = base64Url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
-      const state = base64Url(crypto.getRandomValues(new Uint8Array(16)));
-      sessionStorage.setItem('od_pkce', JSON.stringify({ verifier, state }));
-      const params = new URLSearchParams({
-        client_id: clientId,
-        response_type: 'code',
-        redirect_uri: odRedirectUri(),
-        response_mode: 'query',
-        scope: 'offline_access Files.ReadWrite',
-        code_challenge: challenge,
-        code_challenge_method: 'S256',
-        state
+    // 必須在點按事件中同步呼叫，否則 iOS Safari 會擋下授權彈窗
+    function gdRequestToken(prompt) {
+      return new Promise((resolve, reject) => {
+        const { clientId } = gdSettings();
+        if (!clientId) return reject(new Error('請先填入 Google OAuth 用戶端 ID'));
+        if (!window.google?.accounts?.oauth2) return reject(new Error('Google 登入元件尚未載入，請確認網路後重試'));
+        const client = google.accounts.oauth2.initTokenClient({
+          client_id: clientId,
+          scope: GD_SCOPE,
+          callback: (resp) => {
+            if (resp.error) return reject(new Error(resp.error_description || resp.error));
+            if (!google.accounts.oauth2.hasGrantedAllScopes(resp, GD_SCOPE)) return reject(new Error('未授予 Google Drive 檔案權限'));
+            localStorage.setItem('gd_token', JSON.stringify({
+              access_token: resp.access_token,
+              expires_at: Date.now() + (Number(resp.expires_in) - 120) * 1000
+            }));
+            localStorage.setItem('gd_linked', '1');
+            resolve(resp.access_token);
+          },
+          error_callback: (err) => reject(new Error(err?.type === 'popup_closed' ? '已關閉 Google 授權視窗' : (err?.message || err?.type || '無法開啟 Google 授權視窗')))
+        });
+        client.requestAccessToken({ prompt });
       });
-      location.href = `https://login.microsoftonline.com/${encodeURIComponent(tenant)}/oauth2/v2.0/authorize?${params}`;
     }
 
-    async function handleOneDriveRedirect() {
-      const params = new URLSearchParams(location.search);
-      if (!params.has('code') && !params.has('error')) return;
-      const pkce = JSON.parse(sessionStorage.getItem('od_pkce') || 'null');
-      sessionStorage.removeItem('od_pkce');
-      history.replaceState(null, '', odRedirectUri());
+    function gdConnect() {
+      gdRequestToken('consent')
+        .then(() => { toast('Google Drive 已連結'); updateGdStatus(); renderHistory(); })
+        .catch(e => alert(`Google Drive 連結失敗：${e.message}`));
+    }
 
-      if (params.has('error')) {
-        alert(`OneDrive 授權失敗：${params.get('error_description') || params.get('error')}`);
-        return;
+    function gdDisconnect() {
+      const token = gdValidToken();
+      if (token && window.google?.accounts?.oauth2) google.accounts.oauth2.revoke(token, () => {});
+      ['gd_token', 'gd_linked', 'gd_folder_id', 'gd_folder_id_name'].forEach(k => localStorage.removeItem(k));
+      updateGdStatus();
+      renderHistory();
+    }
+
+    // 點「☁️ 上傳」時：權杖有效直接上傳，否則先在同一個手勢內重新授權
+    function gdUploadWithGesture(id) {
+      if (gdValidToken()) { backupToCloud(id); return; }
+      gdRequestToken('')
+        .then(() => backupToCloud(id))
+        .catch(e => toast(`Google 授權失敗：${e.message}`));
+    }
+
+    async function gdFetch(url, options = {}, label = 'Google Drive 請求') {
+      const token = gdValidToken();
+      if (!token) throw new Error('Google 授權已過期，請在暫存紀錄按「☁️ 上傳」重新授權');
+      const res = await fetch(url, { ...options, headers: { ...(options.headers || {}), Authorization: `Bearer ${token}` } });
+      if (res.status === 401) {
+        localStorage.removeItem('gd_token');
+        throw new Error('Google 授權已過期，請在暫存紀錄按「☁️ 上傳」重新授權');
       }
-      if (!pkce || pkce.state !== params.get('state')) {
-        alert('OneDrive 授權狀態不符，請重新連結');
-        return;
+      if (!res.ok) {
+        let msg = '';
+        try { msg = (await res.json()).error?.message || ''; } catch (e) {}
+        const err = new Error(`${label}失敗 (HTTP ${res.status}${msg ? '：' + msg : ''})`);
+        err.status = res.status;
+        throw err;
+      }
+      return res;
+    }
+
+    async function gdEnsureFolder() {
+      const { folder } = gdSettings();
+      const cached = localStorage.getItem('gd_folder_id');
+      if (cached && localStorage.getItem('gd_folder_id_name') === folder) return cached;
+
+      const q = `name = '${folder.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and 'root' in parents and trashed = false`;
+      const found = await (await gdFetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id)&spaces=drive`, {}, '查詢資料夾')).json();
+      let id = found.files?.[0]?.id;
+      if (!id) {
+        const created = await (await gdFetch('https://www.googleapis.com/drive/v3/files?fields=id', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: folder, mimeType: 'application/vnd.google-apps.folder', parents: ['root'] })
+        }, '建立資料夾')).json();
+        id = created.id;
+      }
+      localStorage.setItem('gd_folder_id', id);
+      localStorage.setItem('gd_folder_id_name', folder);
+      return id;
+    }
+
+    async function gdCreateFile(name, blob, folderId) {
+      const type = blob.type || 'application/octet-stream';
+      const metadata = { name, parents: [folderId], mimeType: type };
+      if (blob.size > GD_MULTIPART_LIMIT) {
+        // 大檔：resumable upload
+        const init = await gdFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json; charset=UTF-8', 'X-Upload-Content-Type': type, 'X-Upload-Content-Length': String(blob.size) },
+          body: JSON.stringify(metadata)
+        }, '建立上傳工作');
+        const location = init.headers.get('Location');
+        if (location) {
+          const res = await fetch(location, { method: 'PUT', headers: { 'Content-Type': type }, body: blob });
+          if (!res.ok) throw new Error(`Google Drive 上傳失敗 (HTTP ${res.status})`);
+          return (await res.json()).id;
+        }
+      }
+      const boundary = 'vn' + crypto.getRandomValues(new Uint32Array(2)).join('');
+      const body = new Blob([
+        `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n`,
+        `--${boundary}\r\nContent-Type: ${type}\r\n\r\n`, blob, `\r\n--${boundary}--`
+      ]);
+      const res = await gdFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
+        method: 'POST',
+        headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
+        body
+      }, '上傳檔案');
+      return (await res.json()).id;
+    }
+
+    // 已上傳過就覆寫內容（文字檔分析完成後更新），找不到就新建
+    async function gdUpsertFile(existingId, name, blob) {
+      const folderId = await gdEnsureFolder();
+      if (existingId) {
+        try {
+          await gdFetch(`https://www.googleapis.com/upload/drive/v3/files/${encodeURIComponent(existingId)}?uploadType=media&fields=id`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': blob.type || 'application/octet-stream' },
+            body: blob
+          }, '更新檔案');
+          return existingId;
+        } catch (e) {
+          if (e.status !== 404) throw e;
+        }
       }
       try {
-        await odTokenRequest({
-          grant_type: 'authorization_code',
-          code: params.get('code'),
-          redirect_uri: odRedirectUri(),
-          code_verifier: pkce.verifier
-        });
-        toast('OneDrive 已連結');
+        return await gdCreateFile(name, blob, folderId);
       } catch (e) {
-        alert(`OneDrive 取得權杖失敗：${e.message}`);
-      }
-    }
-
-    async function odTokenRequest(body) {
-      const { clientId, tenant } = odSettings();
-      const res = await fetch(`https://login.microsoftonline.com/${encodeURIComponent(tenant)}/oauth2/v2.0/token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ client_id: clientId, scope: 'offline_access Files.ReadWrite', ...body })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error_description || data.error || `HTTP ${res.status}`);
-      localStorage.setItem('od_tokens', JSON.stringify({
-        access_token: data.access_token,
-        refresh_token: data.refresh_token,
-        expires_at: Date.now() + (data.expires_in - 120) * 1000
-      }));
-      return data.access_token;
-    }
-
-    async function odAccessToken() {
-      const t = odGetTokens();
-      if (!t?.refresh_token) throw new Error('尚未連結 OneDrive');
-      if (t.access_token && Date.now() < t.expires_at) return t.access_token;
-      try {
-        return await odTokenRequest({ grant_type: 'refresh_token', refresh_token: t.refresh_token });
-      } catch (e) {
-        localStorage.removeItem('od_tokens');
-        throw new Error(`OneDrive 授權已過期，請重新連結（${e.message}）`);
-      }
-    }
-
-    function odItemPath(name) {
-      const path = `${odSettings().folder}/${name}`;
-      return path.split('/').filter(Boolean).map(encodeURIComponent).join('/');
-    }
-
-    async function odUpload(name, blob) {
-      const token = await odAccessToken();
-      const graph = 'https://graph.microsoft.com/v1.0/me/drive/root:';
-      if (blob.size < 4 * 1024 * 1024) {
-        const res = await fetch(`${graph}/${odItemPath(name)}:/content`, {
-          method: 'PUT',
-          headers: { Authorization: `Bearer ${token}`, 'Content-Type': blob.type || 'application/octet-stream' },
-          body: blob
-        });
-        if (!res.ok) throw new Error(`OneDrive 上傳失敗 (HTTP ${res.status})`);
-        return;
-      }
-      // 大檔：upload session，分段需為 320 KiB 倍數
-      const sessionRes = await fetch(`${graph}/${odItemPath(name)}:/createUploadSession`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ item: { '@microsoft.graph.conflictBehavior': 'replace' } })
-      });
-      if (!sessionRes.ok) throw new Error(`OneDrive 建立上傳工作失敗 (HTTP ${sessionRes.status})`);
-      const { uploadUrl } = await sessionRes.json();
-      const chunkSize = 320 * 1024 * 10;
-      for (let start = 0; start < blob.size; start += chunkSize) {
-        const end = Math.min(start + chunkSize, blob.size);
-        const res = await fetch(uploadUrl, {
-          method: 'PUT',
-          headers: { 'Content-Range': `bytes ${start}-${end - 1}/${blob.size}` },
-          body: blob.slice(start, end)
-        });
-        if (!res.ok) throw new Error(`OneDrive 分段上傳失敗 (HTTP ${res.status})`);
+        if (e.status !== 404) throw e;
+        localStorage.removeItem('gd_folder_id'); // 資料夾被刪除：重建後再試一次
+        return gdCreateFile(name, blob, await gdEnsureFolder());
       }
     }
 
@@ -1143,19 +1164,22 @@
       const rec = await getRecord(id);
       if (!rec) return;
       const base = fileBaseName(rec);
+      const cloud = { ...(rec.cloud || {}) };
       try {
-        if (!textOnly) {
+        if (!cloud.audioId) {
           const mp3 = rec.mp3Status === 'done' ? await getBlob(`${id}:mp3`) : null;
           const audio = mp3 || await getBlob(`${id}:orig`);
-          if (audio) await odUpload(`${base}.${mp3 ? 'mp3' : audioExt(rec.mimeType)}`, audio);
+          if (audio && !cloud.audioId) {
+            cloud.audioId = await gdUpsertFile(null, `${base}.${mp3 ? 'mp3' : audioExt(rec.mimeType)}`, audio);
+          }
         }
-        await odUpload(`${base}.md`, new Blob([buildMarkdown(rec)], { type: 'text/markdown' }));
-        await updateRecord(id, { cloud: { ok: true, at: Date.now(), audio: !textOnly || rec.cloud?.audio } });
-        if (!silent) toast('已備份到 OneDrive');
+        cloud.mdId = await gdUpsertFile(cloud.mdId, `${base}.md`, new Blob([buildMarkdown(rec)], { type: 'text/markdown' }));
+        await updateRecord(id, { cloud: { ...cloud, ok: true, at: Date.now(), error: '' } });
+        if (!silent) toast('已備份到 Google Drive');
       } catch (e) {
         console.error(e);
-        await updateRecord(id, { cloud: { ok: false, at: Date.now(), error: e.message, audio: rec.cloud?.audio } });
-        toast(`OneDrive 備份失敗：${e.message}`);
+        await updateRecord(id, { cloud: { ...cloud, ok: false, at: Date.now(), error: e.message } });
+        toast(`Google Drive 備份失敗：${e.message}`);
       }
       renderHistory();
     }
@@ -1226,7 +1250,7 @@
           if (rec.status !== 'processing') addBtn(rec.status === 'done' ? '🔁 重新分析' : '🔁 重試分析', () => processRecording(rec.id), rec.status !== 'done');
           addBtn('⬇️ 音檔', () => downloadAudio(rec.id));
           addBtn('⬇️ 文字', () => downloadText(rec.id));
-          if (odIsConnected()) addBtn('☁️ 上傳', () => backupToCloud(rec.id));
+          if (gdIsConnected()) addBtn('☁️ 上傳', () => gdUploadWithGesture(rec.id));
           if (rec.status !== 'processing') addBtn('🗑️', () => removeRecording(rec.id));
           li.appendChild(actions);
         }
@@ -1553,19 +1577,15 @@
         closeSettingsModal();
         renderHistory();
       });
-      document.getElementById('btnOdConnect').addEventListener('click', () => {
+      document.getElementById('btnGdConnect').addEventListener('click', () => {
         saveSettingsFromForm();
-        odConnect();
+        gdConnect();
       });
       document.getElementById('btnRunDiag').addEventListener('click', runDiagnostics);
       document.getElementById('btnCopyDiag').addEventListener('click', () => {
         navigator.clipboard.writeText(document.getElementById('diagOutput').innerText).then(() => toast('已複製檢測結果'));
       });
-      document.getElementById('btnOdDisconnect').addEventListener('click', () => {
-        localStorage.removeItem('od_tokens');
-        updateOdStatus();
-        renderHistory();
-      });
+      document.getElementById('btnGdDisconnect').addEventListener('click', gdDisconnect);
 
       document.getElementById('btnOpenTemplates').addEventListener('click', openTemplateModal);
       document.getElementById('btnCloseTemplateModal').addEventListener('click', () => {
@@ -1585,16 +1605,15 @@
     }
 
     function openSettingsModal() {
-      const od = odSettings();
+      const gd = gdSettings();
       document.getElementById('apiKeyInput').value = localStorage.getItem('gemini_api_key') || '';
       document.getElementById('modelNameInput').value = localStorage.getItem('gemini_model_name') || DEFAULT_MODEL;
       document.getElementById('retryCountInput').value = getRetryCount();
-      document.getElementById('odClientIdInput').value = od.clientId;
-      document.getElementById('odTenantInput').value = localStorage.getItem('od_tenant') || '';
-      document.getElementById('odFolderInput').value = localStorage.getItem('od_folder') || '';
-      document.getElementById('odAutoInput').checked = od.auto;
-      document.getElementById('odRedirectHint').textContent = odRedirectUri();
-      updateOdStatus();
+      document.getElementById('gdClientIdInput').value = gd.clientId;
+      document.getElementById('gdFolderInput').value = localStorage.getItem('gd_folder') || '';
+      document.getElementById('gdAutoInput').checked = gd.auto;
+      document.getElementById('gdOriginHint').textContent = location.origin;
+      updateGdStatus();
       document.getElementById('settingsModal').classList.remove('hidden');
     }
 
@@ -1605,20 +1624,17 @@
       localStorage.setItem('gemini_model_name', document.getElementById('modelNameInput').value.trim() || DEFAULT_MODEL);
       const retry = parseInt(document.getElementById('retryCountInput').value, 10);
       localStorage.setItem('gemini_retry_count', String(Number.isFinite(retry) ? Math.max(0, Math.min(5, retry)) : 3));
-      const prevClient = localStorage.getItem('od_client_id') || '';
-      const prevTenant = localStorage.getItem('od_tenant') || '';
-      const clientId = document.getElementById('odClientIdInput').value.trim();
-      const tenant = document.getElementById('odTenantInput').value.trim();
-      setOrRemove('od_client_id', clientId);
-      setOrRemove('od_tenant', tenant);
-      setOrRemove('od_folder', document.getElementById('odFolderInput').value.trim());
-      localStorage.setItem('od_auto', document.getElementById('odAutoInput').checked ? '1' : '0');
-      if (clientId !== prevClient || tenant !== prevTenant) localStorage.removeItem('od_tokens');
+      const prevClient = localStorage.getItem('gd_client_id') || '';
+      const clientId = document.getElementById('gdClientIdInput').value.trim();
+      setOrRemove('gd_client_id', clientId);
+      setOrRemove('gd_folder', document.getElementById('gdFolderInput').value.trim());
+      localStorage.setItem('gd_auto', document.getElementById('gdAutoInput').checked ? '1' : '0');
+      if (clientId !== prevClient) ['gd_token', 'gd_linked', 'gd_folder_id', 'gd_folder_id_name'].forEach(k => localStorage.removeItem(k));
     }
 
-    function updateOdStatus() {
-      const el = document.getElementById('odStatus');
-      const connected = odIsConnected();
+    function updateGdStatus() {
+      const el = document.getElementById('gdStatus');
+      const connected = gdIsConnected();
       el.textContent = connected ? '✅ 已連結' : '未連結';
       el.className = `text-[10px] ${connected ? 'text-emerald-600' : 'text-slate-400'}`;
     }
