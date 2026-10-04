@@ -8,6 +8,8 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Marked.js 用於渲染 Markdown -->
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <!-- lamejs 用於瀏覽器端 MP3 編碼 -->
+  <script src="https://cdn.jsdelivr.net/npm/lamejs@1.2.1/lame.min.js"></script>
   <style>
     body {
       padding-top: env(safe-area-inset-top);
@@ -33,7 +35,7 @@
           <span>⚙️ 範本</span>
         </button>
         <button id="btnOpenSettings" class="p-2 text-slate-600 hover:text-indigo-600 rounded-lg hover:bg-slate-100 text-sm flex items-center gap-1">
-          <span>🔑 API</span>
+          <span>🔑 設定</span>
         </button>
       </div>
     </div>
@@ -102,7 +104,7 @@
     <div id="loadingIndicator" class="hidden bg-white rounded-2xl p-6 shadow-sm border border-slate-200/80 text-center space-y-3">
       <div class="inline-block animate-spin w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full"></div>
       <p id="loadingTitle" class="text-sm font-medium text-slate-700">Gemini 正在深度辨識多語言與整理摘要...</p>
-      <p class="text-xs text-slate-400">正在分析國語、英語、台語、客語並進行說話者分離</p>
+      <p id="loadingDetail" class="text-xs text-slate-400">錄音已暫存於本機，處理失敗也不會遺失</p>
     </div>
 
     <!-- 分析結果區域 -->
@@ -121,6 +123,16 @@
         <button id="btnCopyResult" class="px-3 py-1.5 bg-white border border-slate-300 text-slate-700 text-xs font-medium rounded-lg hover:bg-slate-50 active:scale-95 transition-all">📋 複製內容</button>
         <button id="btnDownloadMd" class="px-3 py-1.5 bg-indigo-600 text-white text-xs font-medium rounded-lg hover:bg-indigo-700 active:scale-95 transition-all">💾 下載 Markdown</button>
       </div>
+    </div>
+
+    <!-- 暫存紀錄（IndexedDB） -->
+    <div class="bg-white rounded-2xl shadow-sm border border-slate-200/80 overflow-hidden">
+      <div class="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
+        <h2 class="text-sm font-bold text-slate-700">🗂️ 暫存紀錄</h2>
+        <span id="storageInfo" class="text-[10px] text-slate-400"></span>
+      </div>
+      <ul id="historyList" class="divide-y divide-slate-100"></ul>
+      <p id="historyEmpty" class="px-4 py-6 text-center text-xs text-slate-400">尚無錄音。錄音會即時寫入本機，API 失敗也能稍後重試。</p>
     </div>
 
   </main>
@@ -168,7 +180,7 @@
 
   <!-- 彈出視窗：API 金鑰與模型設定 -->
   <div id="settingsModal" class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-    <div class="bg-white rounded-2xl max-w-sm w-full p-5 shadow-xl space-y-4">
+    <div class="bg-white rounded-2xl max-w-sm w-full max-h-[90vh] overflow-y-auto p-5 shadow-xl space-y-4">
       <h3 class="font-bold text-slate-800 text-base">Gemini API 設定</h3>
       
       <div>
@@ -187,6 +199,46 @@
       <div class="text-[11px] text-indigo-600">
         <a href="https://aistudio.google.com/" target="_blank" class="underline">前往 Google AI Studio 免費領取金鑰 &rarr;</a>
       </div>
+
+      <div>
+        <div class="flex justify-between items-center mb-1">
+          <label class="block text-xs font-semibold text-slate-500">API 忙碌時自動重試次數</label>
+          <span class="text-[10px] text-slate-400">間隔 3s / 8s / 20s / 45s…</span>
+        </div>
+        <input type="number" id="retryCountInput" min="0" max="5" class="w-full bg-slate-50 border border-slate-300 text-sm rounded-xl p-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+      </div>
+
+      <div class="border-t border-slate-200 pt-4 space-y-3">
+        <div class="flex justify-between items-center">
+          <h3 class="font-bold text-slate-800 text-base">☁️ OneDrive 備份</h3>
+          <span id="odStatus" class="text-[10px] text-slate-400">未連結</span>
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-500 mb-1">應用程式 (Client) ID</label>
+          <input type="text" id="odClientIdInput" placeholder="Azure / Entra 應用程式註冊的 Client ID" class="w-full bg-slate-50 border border-slate-300 text-sm rounded-xl p-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="block text-xs font-semibold text-slate-500 mb-1">Tenant</label>
+            <input type="text" id="odTenantInput" placeholder="common" class="w-full bg-slate-50 border border-slate-300 text-sm rounded-xl p-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-500 mb-1">資料夾</label>
+            <input type="text" id="odFolderInput" placeholder="VoiceNotes" class="w-full bg-slate-50 border border-slate-300 text-sm rounded-xl p-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+          </div>
+        </div>
+        <label class="flex items-center gap-2 text-xs text-slate-600">
+          <input type="checkbox" id="odAutoInput" class="rounded"> 錄音結束後自動上傳 MP3 與文字
+        </label>
+        <p class="text-[10px] text-slate-400 leading-relaxed">
+          Entra 應用程式註冊：平台選「單頁應用程式 (SPA)」，Redirect URI 填 <span id="odRedirectHint" class="font-mono break-all"></span>，委派權限 Files.ReadWrite、offline_access。個人帳號 tenant 用 consumers，院內 M365 填組織 tenant ID。
+        </p>
+        <div class="flex gap-2">
+          <button id="btnOdConnect" class="flex-1 px-3 py-1.5 bg-sky-600 text-white text-xs font-medium rounded-lg">連結 OneDrive</button>
+          <button id="btnOdDisconnect" class="px-3 py-1.5 bg-slate-100 text-slate-600 text-xs rounded-lg border border-slate-300">中斷連結</button>
+        </div>
+      </div>
+
       <div class="flex justify-end gap-2 pt-2">
         <button id="btnCloseSettings" class="px-3 py-1.5 text-xs text-slate-600">取消</button>
         <button id="btnSaveApiKey" class="px-4 py-1.5 bg-indigo-600 text-white text-xs font-medium rounded-lg">儲存設定</button>
@@ -222,7 +274,6 @@
 
     let templates = [];
     let mediaRecorder = null;
-    let audioChunks = [];
     let isRecording = false;
     let timerInterval = null;
     let secondsElapsed = 0;
@@ -232,10 +283,29 @@
     let wakeLock = null;
     let speechRecognizer = null;
     let fullFinalResponse = { summary: "", transcript: "" };
+    let currentResultRec = null;
 
-    window.addEventListener('DOMContentLoaded', () => {
+    // 錄音暫存狀態
+    let currentRec = null;
+    let pendingChunks = [];
+    let chunkSeq = 0;
+    let flushInterval = null;
+    let liveFinalText = '';
+    let liveInterimText = '';
+    let processingId = null;
+
+    const DEFAULT_MODEL = 'gemini-3.8-flash';
+    const INLINE_LIMIT_BYTES = 14 * 1024 * 1024; // 超過則改走 Gemini Files API（inline 請求上限約 20MB，base64 會膨脹 1/3）
+    const RETRY_DELAYS = [3, 8, 20, 45, 90];
+    const MP3_SAMPLE_RATE = 16000;
+
+    window.addEventListener('DOMContentLoaded', async () => {
       loadTemplates();
       setupUIEventListeners();
+      await handleOneDriveRedirect();
+      await recoverInterruptedRecordings();
+      renderHistory();
+      requestPersistentStorage();
       checkApiKeyPrompt();
     });
 
@@ -283,6 +353,128 @@
       }
     }
 
+    // ===================== IndexedDB 暫存 =====================
+    // recordings: 錄音中繼資料與結果；chunks: 錄音中即時寫入的片段；blobs: 完成的原始音檔與 MP3
+    let dbPromise = null;
+    function openDB() {
+      if (!dbPromise) {
+        dbPromise = new Promise((resolve, reject) => {
+          const req = indexedDB.open('voice-notes-db', 1);
+          req.onupgradeneeded = () => {
+            const db = req.result;
+            db.createObjectStore('recordings', { keyPath: 'id' });
+            db.createObjectStore('chunks', { keyPath: 'key' });
+            db.createObjectStore('blobs', { keyPath: 'key' });
+          };
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => reject(req.error);
+        });
+      }
+      return dbPromise;
+    }
+
+    async function idb(storeName, mode, fn) {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(storeName, mode);
+        const store = tx.objectStore(storeName);
+        let result;
+        const req = fn(store);
+        if (req) req.onsuccess = () => { result = req.result; };
+        tx.oncomplete = () => resolve(result);
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error);
+      });
+    }
+
+    const getRecord = (id) => idb('recordings', 'readonly', s => s.get(id));
+    const putRecord = (rec) => idb('recordings', 'readwrite', s => s.put(rec));
+    const getAllRecords = () => idb('recordings', 'readonly', s => s.getAll());
+    const getBlob = async (key) => (await idb('blobs', 'readonly', s => s.get(key)))?.blob || null;
+    const putBlob = (key, blob) => idb('blobs', 'readwrite', s => s.put({ key, blob }));
+    const chunkRange = (id) => IDBKeyRange.bound(`${id}:`, `${id}:￿`);
+
+    async function updateRecord(id, patch) {
+      const rec = await getRecord(id);
+      if (!rec) return null;
+      Object.assign(rec, patch);
+      await putRecord(rec);
+      return rec;
+    }
+
+    async function deleteRecordingData(id) {
+      await idb('recordings', 'readwrite', s => s.delete(id));
+      await idb('chunks', 'readwrite', s => s.delete(chunkRange(id)));
+      await idb('blobs', 'readwrite', s => s.delete(IDBKeyRange.bound(`${id}:`, `${id}:￿`)));
+    }
+
+    async function flushChunks() {
+      if (!currentRec) return;
+      const toWrite = pendingChunks;
+      pendingChunks = [];
+      const id = currentRec.id;
+      const liveTranscript = getLiveTranscript();
+      try {
+        if (toWrite.length) {
+          await idb('chunks', 'readwrite', s => {
+            toWrite.forEach(blob => s.put({ key: `${id}:${String(chunkSeq++).padStart(7, '0')}`, blob }));
+          });
+        }
+        await updateRecord(id, { liveTranscript, durationSec: secondsElapsed });
+      } catch (e) {
+        console.error('暫存寫入失敗', e);
+        pendingChunks = toWrite.concat(pendingChunks);
+      }
+    }
+
+    // 把片段合併為單一原始音檔，刪除片段
+    async function assembleRecording(id, mimeType) {
+      const chunks = await idb('chunks', 'readonly', s => s.getAll(chunkRange(id)));
+      if (!chunks || !chunks.length) return null;
+      chunks.sort((a, b) => a.key.localeCompare(b.key));
+      const blob = new Blob(chunks.map(c => c.blob), { type: mimeType || chunks[0].blob.type });
+      await putBlob(`${id}:orig`, blob);
+      await idb('chunks', 'readwrite', s => s.delete(chunkRange(id)));
+      return blob;
+    }
+
+    // 頁面關閉、當機或 iOS 回收分頁時，下次開啟從片段復原
+    async function recoverInterruptedRecordings() {
+      try {
+        const recs = await getAllRecords();
+        for (const rec of recs) {
+          if (rec.status !== 'recording') continue;
+          const blob = await assembleRecording(rec.id, rec.mimeType);
+          if (blob) {
+            await updateRecord(rec.id, { status: 'saved', origSize: blob.size, note: '錄音中斷，已從暫存片段復原' });
+            convertAndBackup(rec.id);
+          } else {
+            await updateRecord(rec.id, { status: 'failed', error: '錄音中斷，沒有可復原的音訊片段' });
+          }
+        }
+      } catch (e) {
+        console.error('復原失敗', e);
+      }
+    }
+
+    async function requestPersistentStorage() {
+      try {
+        if (navigator.storage?.persist) await navigator.storage.persist();
+      } catch (e) {}
+      updateStorageInfo();
+    }
+
+    async function updateStorageInfo() {
+      try {
+        if (!navigator.storage?.estimate) return;
+        const { usage, quota } = await navigator.storage.estimate();
+        const persisted = navigator.storage.persisted ? await navigator.storage.persisted() : false;
+        document.getElementById('storageInfo').textContent =
+          `本機 ${formatBytes(usage)} / ${formatBytes(quota)}${persisted ? ' · 已鎖定保存' : ''}`;
+      } catch (e) {}
+    }
+
+    // ===================== 錄音 =====================
     async function toggleRecording() {
       if (!isRecording) {
         await startRecording();
@@ -292,29 +484,40 @@
     }
 
     async function startRecording() {
-      const apiKey = localStorage.getItem('gemini_api_key');
-      if (!apiKey) {
-        openSettingsModal();
-        alert('請先設定 Google Gemini API Key。');
-        return;
-      }
-
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        
+
         let mimeType = 'audio/mp4';
         if (!MediaRecorder.isTypeSupported('audio/mp4')) {
           mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '';
         }
 
         mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
-        audioChunks = [];
+
+        const tpl = getSelectedTemplate();
+        currentRec = {
+          id: 'rec_' + Date.now(),
+          createdAt: Date.now(),
+          templateId: tpl.id,
+          templateName: tpl.name,
+          speakerHint: document.getElementById('speakerHintInput').value.trim(),
+          mimeType: mediaRecorder.mimeType || mimeType || 'audio/webm',
+          status: 'recording',
+          liveTranscript: '',
+          durationSec: 0
+        };
+        await putRecord(currentRec);
+        pendingChunks = [];
+        chunkSeq = 0;
+        liveFinalText = '';
+        liveInterimText = '';
 
         mediaRecorder.ondataavailable = (e) => {
-          if (e.data && e.data.size > 0) audioChunks.push(e.data);
+          if (e.data && e.data.size > 0) pendingChunks.push(e.data);
         };
 
-        mediaRecorder.start(250);
+        mediaRecorder.start(1000);
+        flushInterval = setInterval(flushChunks, 3000);
         isRecording = true;
 
         requestWakeLock();
@@ -322,6 +525,7 @@
         setupVisualizer(stream);
         startLiveSpeechRecognition();
         updateRecordingUI(true);
+        renderHistory();
 
       } catch (err) {
         console.error('無法啟動錄音：', err);
@@ -338,17 +542,34 @@
       stopLiveSpeechRecognition();
       releaseWakeLock();
       updateRecordingUI(false);
+      clearInterval(flushInterval);
 
-      mediaRecorder.stream.getTracks().forEach(track => track.stop());
+      const rec = currentRec;
+      const recorder = mediaRecorder;
+      const stopped = new Promise(resolve => { recorder.onstop = resolve; });
+      try { recorder.stop(); } catch (e) {}
+      await stopped;
+      recorder.stream.getTracks().forEach(track => track.stop());
 
-      document.getElementById('loadingIndicator').classList.remove('hidden');
-      document.getElementById('resultCard').classList.add('hidden');
+      await flushChunks();
+      currentRec = null;
 
-      mediaRecorder.onstop = async () => {
-        const mimeType = mediaRecorder.mimeType || 'audio/mp4';
-        const audioBlob = new Blob(audioChunks, { type: mimeType });
-        await processAudioWithGemini(audioBlob, mimeType);
-      };
+      const blob = await assembleRecording(rec.id, rec.mimeType);
+      if (!blob) {
+        await updateRecord(rec.id, { status: 'failed', error: '沒有錄到音訊' });
+        renderHistory();
+        return;
+      }
+      await updateRecord(rec.id, { status: 'saved', origSize: blob.size, durationSec: secondsElapsed });
+      renderHistory();
+      updateStorageInfo();
+
+      await convertAndBackup(rec.id);
+      await processRecording(rec.id);
+    }
+
+    function getLiveTranscript() {
+      return (liveFinalText + (liveInterimText ? liveInterimText : '')).trim();
     }
 
     function startLiveSpeechRecognition() {
@@ -366,15 +587,29 @@
         liveCard.classList.remove('hidden');
         liveText.textContent = '聆聽中...';
 
+        // 累積已確定的句子，避免只保留最後一段
         speechRecognizer.onresult = (event) => {
-          let text = '';
+          let interim = '';
           for (let i = event.resultIndex; i < event.results.length; ++i) {
-            text += event.results[i][0].transcript;
+            const r = event.results[i];
+            if (r.isFinal) liveFinalText += r[0].transcript + '\n';
+            else interim += r[0].transcript;
           }
-          if (text.trim()) liveText.textContent = text;
+          liveInterimText = interim;
+          const text = getLiveTranscript();
+          if (text) {
+            liveText.textContent = text.split('\n').slice(-4).join('\n');
+          }
         };
 
         speechRecognizer.onerror = () => {};
+        // iOS / Chrome 靜音一段時間會自動結束，錄音中則自動重啟
+        speechRecognizer.onend = () => {
+          if (liveInterimText) { liveFinalText += liveInterimText + '\n'; liveInterimText = ''; }
+          if (isRecording && speechRecognizer) {
+            try { speechRecognizer.start(); } catch (e) {}
+          }
+        };
         speechRecognizer.start();
       } catch (e) {
         console.warn('即時辨識不支援或初始化失敗', e);
@@ -383,20 +618,209 @@
 
     function stopLiveSpeechRecognition() {
       if (speechRecognizer) {
-        try { speechRecognizer.stop(); } catch(e) {}
+        const r = speechRecognizer;
         speechRecognizer = null;
+        try { r.stop(); } catch(e) {}
       }
       document.getElementById('liveTranscriptCard').classList.add('hidden');
     }
 
-    async function processAudioWithGemini(audioBlob, mimeType) {
+    // ===================== MP3 轉檔 =====================
+    async function encodeMp3(blob) {
+      if (typeof lamejs === 'undefined') throw new Error('MP3 編碼器未載入');
+      const arrayBuf = await blob.arrayBuffer();
+      const Offline = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+      const ctx = new Offline(1, MP3_SAMPLE_RATE, MP3_SAMPLE_RATE);
+      const audioBuf = await new Promise((resolve, reject) => {
+        const p = ctx.decodeAudioData(arrayBuf, resolve, reject);
+        if (p && p.then) p.then(resolve, reject);
+      });
+
+      const sr = audioBuf.sampleRate;
+      const len = audioBuf.length;
+      const channels = [];
+      for (let c = 0; c < audioBuf.numberOfChannels; c++) channels.push(audioBuf.getChannelData(c));
+
+      const kbps = sr >= 32000 ? 64 : 32;
+      const encoder = new lamejs.Mp3Encoder(1, sr, kbps);
+      const parts = [];
+      const step = 1152 * 64;
+      for (let start = 0; start < len; start += step) {
+        const end = Math.min(start + step, len);
+        const pcm = new Int16Array(end - start);
+        for (let i = start; i < end; i++) {
+          let v = 0;
+          for (const ch of channels) v += ch[i];
+          v /= channels.length;
+          v = Math.max(-1, Math.min(1, v));
+          pcm[i - start] = v < 0 ? v * 0x8000 : v * 0x7fff;
+        }
+        const buf = encoder.encodeBuffer(pcm);
+        if (buf.length) parts.push(new Uint8Array(buf));
+        if ((start / step) % 20 === 19) await new Promise(r => setTimeout(r, 0));
+      }
+      const tail = encoder.flush();
+      if (tail.length) parts.push(new Uint8Array(tail));
+      return new Blob(parts, { type: 'audio/mpeg' });
+    }
+
+    // 轉 MP3（失敗仍保留原始檔）→ 雲端備份
+    async function convertAndBackup(id) {
+      let rec = await getRecord(id);
+      if (!rec) return;
+      if (rec.mp3Status !== 'done') {
+        setLoading(true, '正在轉換 MP3...', '原始錄音已暫存於本機');
+        try {
+          const orig = await getBlob(`${id}:orig`);
+          const mp3 = await encodeMp3(orig);
+          await putBlob(`${id}:mp3`, mp3);
+          rec = await updateRecord(id, { mp3Status: 'done', mp3Size: mp3.size });
+        } catch (e) {
+          console.warn('MP3 轉檔失敗，保留原始檔', e);
+          rec = await updateRecord(id, { mp3Status: 'failed', mp3Error: e.message });
+        }
+        setLoading(false);
+        renderHistory();
+        updateStorageInfo();
+      }
+      if (odSettings().auto && odIsConnected()) {
+        await backupToCloud(id, { silent: true });
+      }
+    }
+
+    // ===================== Gemini =====================
+    function getSelectedTemplate() {
+      return templates.find(t => t.id === document.getElementById('templateSelect').value) || templates[0];
+    }
+
+    function getRetryCount() {
+      const v = parseInt(localStorage.getItem('gemini_retry_count'), 10);
+      return Number.isFinite(v) ? Math.max(0, Math.min(5, v)) : 3;
+    }
+
+    async function processRecording(id) {
+      if (processingId) {
+        toast('另一筆紀錄正在分析中，請稍候');
+        return;
+      }
       const apiKey = localStorage.getItem('gemini_api_key');
-      // 讀取設定的模型，預設改用 gemini-3.8-flash
-      const modelName = localStorage.getItem('gemini_model_name') || 'gemini-3.8-flash';
-      
-      const base64Audio = await blobToBase64(audioBlob);
-      const selectedTpl = templates.find(t => t.id === document.getElementById('templateSelect').value) || templates[0];
-      const speakerHint = document.getElementById('speakerHintInput').value.trim();
+      if (!apiKey) {
+        await updateRecord(id, { status: 'failed', error: '尚未設定 API Key，設定後可按「重新分析」' });
+        renderHistory();
+        openSettingsModal();
+        return;
+      }
+
+      processingId = id;
+      let rec = await updateRecord(id, { status: 'processing', error: '' });
+      renderHistory();
+      document.getElementById('resultCard').classList.add('hidden');
+
+      const maxRetries = getRetryCount();
+      let lastErr = null;
+      try {
+        const mp3 = rec.mp3Status === 'done' ? await getBlob(`${id}:mp3`) : null;
+        const audio = mp3 || await getBlob(`${id}:orig`);
+        const mimeType = mp3 ? 'audio/mp3' : (rec.mimeType || 'audio/mp4').split(';')[0];
+        if (!audio) throw new Error('找不到暫存音檔');
+
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+          try {
+            setLoading(true, attempt ? `Gemini 重試中（第 ${attempt}/${maxRetries} 次）...` : 'Gemini 正在深度辨識多語言與整理摘要...',
+              '錄音已暫存於本機，處理失敗也不會遺失');
+            const rawText = await callGemini(audio, mimeType, rec, apiKey);
+            const { summary, transcript } = parseResult(rawText);
+            rec = await updateRecord(id, { status: 'done', summary, transcript, error: '', attempts: (rec.attempts || 0) + attempt + 1, processedAt: Date.now() });
+            showResult(rec);
+            lastErr = null;
+            break;
+          } catch (err) {
+            lastErr = err;
+            console.error(err);
+            if (!isRetryable(err) || attempt === maxRetries) break;
+            const wait = RETRY_DELAYS[Math.min(attempt, RETRY_DELAYS.length - 1)];
+            for (let s = wait; s > 0; s--) {
+              setLoading(true, `API 忙碌（${err.status || '連線錯誤'}），${s} 秒後重試...`, err.message);
+              await new Promise(r => setTimeout(r, 1000));
+            }
+          }
+        }
+      } catch (err) {
+        lastErr = err;
+      } finally {
+        processingId = null;
+        setLoading(false);
+      }
+
+      if (lastErr) {
+        await updateRecord(id, { status: 'failed', error: lastErr.message || String(lastErr) });
+        toast('分析失敗，錄音已暫存，可在「暫存紀錄」按重新分析');
+      } else if (odSettings().auto && odIsConnected()) {
+        backupToCloud(id, { silent: true, textOnly: true });
+      }
+      renderHistory();
+    }
+
+    function isRetryable(err) {
+      if (!err.status) return err.name === 'TypeError' || err.retryable === true; // fetch 網路錯誤
+      return [408, 429, 500, 502, 503, 504].includes(err.status);
+    }
+
+    async function geminiFetch(url, options, fallbackMsg) {
+      const response = await fetch(url, options);
+      if (!response.ok) {
+        let msg = fallbackMsg;
+        try { msg = (await response.json()).error?.message || msg; } catch (e) {}
+        const err = new Error(`${msg} (HTTP ${response.status})`);
+        err.status = response.status;
+        throw err;
+      }
+      return response;
+    }
+
+    // 大檔走 Files API（resumable upload），避免 inline 20MB 上限
+    async function uploadToGeminiFiles(blob, mimeType, apiKey) {
+      const base = 'https://generativelanguage.googleapis.com';
+      const start = await geminiFetch(`${base}/upload/v1beta/files`, {
+        method: 'POST',
+        headers: {
+          'x-goog-api-key': apiKey,
+          'X-Goog-Upload-Protocol': 'resumable',
+          'X-Goog-Upload-Command': 'start',
+          'X-Goog-Upload-Header-Content-Length': String(blob.size),
+          'X-Goog-Upload-Header-Content-Type': mimeType,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ file: { display_name: 'voice-note' } })
+      }, '音檔上傳初始化失敗');
+      const uploadUrl = start.headers.get('x-goog-upload-url');
+      if (!uploadUrl) throw new Error('無法取得 Gemini 上傳網址');
+
+      const up = await geminiFetch(uploadUrl, {
+        method: 'POST',
+        headers: { 'X-Goog-Upload-Offset': '0', 'X-Goog-Upload-Command': 'upload, finalize' },
+        body: blob
+      }, '音檔上傳失敗');
+      let file = (await up.json()).file;
+
+      for (let i = 0; i < 60 && file.state === 'PROCESSING'; i++) {
+        setLoading(true, 'Gemini 正在處理上傳的音檔...', '大檔案需要較長時間');
+        await new Promise(r => setTimeout(r, 3000));
+        const res = await geminiFetch(`${base}/v1beta/${file.name}`, { headers: { 'x-goog-api-key': apiKey } }, '查詢檔案狀態失敗');
+        file = await res.json();
+      }
+      if (file.state !== 'ACTIVE') {
+        const err = new Error(`Gemini 檔案處理未完成（${file.state}）`);
+        err.retryable = true;
+        throw err;
+      }
+      return { fileData: { mimeType, fileUri: file.uri } };
+    }
+
+    async function callGemini(audioBlob, mimeType, rec, apiKey) {
+      const modelName = localStorage.getItem('gemini_model_name') || DEFAULT_MODEL;
+      const tpl = templates.find(t => t.id === rec.templateId) || { prompt: '' };
+      const speakerHint = rec.speakerHint;
 
       const systemPrompt = `你是一個具備專業多語言聽力與說話者分析專長的助理。
 【原則】
@@ -411,72 +835,61 @@
 <<<TRANSCRIPT>>>
 (此處輸出依時間序列區分說話者的完整逐字稿)`;
 
-      const userPrompt = `請分析這段錄音，並依照以下範本格式輸出：\n\n${selectedTpl.prompt}`;
+      const userPrompt = `請分析這段錄音，並依照以下範本格式輸出：\n\n${tpl.prompt}`;
 
-      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+      const audioPart = audioBlob.size > INLINE_LIMIT_BYTES
+        ? await uploadToGeminiFiles(audioBlob, mimeType, apiKey)
+        : { inlineData: { mimeType, data: (await blobToBase64(audioBlob)).split(',')[1] } };
+
+      setLoading(true, 'Gemini 正在深度辨識多語言與整理摘要...', '錄音已暫存於本機，處理失敗也不會遺失');
 
       const payload = {
         systemInstruction: { parts: [{ text: systemPrompt }] },
-        contents: [
-          {
-            role: "user",
-            parts: [
-              { text: userPrompt },
-              {
-                inlineData: {
-                  mimeType: mimeType.split(';')[0],
-                  data: base64Audio.split(',')[1]
-                }
-              }
-            ]
-          }
-        ],
-        generationConfig: {
-          temperature: 0.2
-        }
+        contents: [{ role: "user", parts: [{ text: userPrompt }, audioPart] }],
+        generationConfig: { temperature: 0.2 }
       };
 
-      try {
-        const response = await fetch(endpoint, {
+      const response = await geminiFetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelName)}:generateContent`,
+        {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
           body: JSON.stringify(payload)
-        });
+        },
+        'Gemini API 呼叫失敗'
+      );
 
-        if (!response.ok) {
-          const errData = await response.json();
-          throw new Error(errData.error?.message || 'Gemini API 呼叫失敗');
-        }
-
-        const data = await response.json();
-        const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-        renderResults(rawText);
-
-      } catch (err) {
-        console.error(err);
-        alert(`處理失敗：${err.message}`);
-      } finally {
-        document.getElementById('loadingIndicator').classList.add('hidden');
+      const data = await response.json();
+      const rawText = data.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
+      if (!rawText) {
+        const err = new Error(`Gemini 未回傳內容（${data.candidates?.[0]?.finishReason || data.promptFeedback?.blockReason || '未知原因'}）`);
+        err.retryable = true;
+        throw err;
       }
+      return rawText;
     }
 
-    function renderResults(rawText) {
+    function parseResult(rawText) {
       let summary = rawText;
       let transcript = '';
-
       if (rawText.includes('<<<SUMMARY>>>') && rawText.includes('<<<TRANSCRIPT>>>')) {
         const parts = rawText.split('<<<TRANSCRIPT>>>');
         summary = parts[0].replace('<<<SUMMARY>>>', '').trim();
         transcript = parts[1].trim();
       }
+      return { summary, transcript };
+    }
 
-      fullFinalResponse = { summary, transcript };
+    function showResult(rec) {
+      currentResultRec = rec;
+      fullFinalResponse = { summary: rec.summary || '', transcript: rec.transcript || '' };
 
-      document.getElementById('summaryContent').innerHTML = marked.parse(summary);
-      document.getElementById('transcriptContent').textContent = transcript || '（未產出分離逐字稿）';
+      document.getElementById('summaryContent').innerHTML = marked.parse(fullFinalResponse.summary);
+      document.getElementById('transcriptContent').textContent = fullFinalResponse.transcript || '（未產出分離逐字稿）';
 
       document.getElementById('resultCard').classList.remove('hidden');
       switchTab('summary');
+      document.getElementById('resultCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
     function blobToBase64(blob) {
@@ -486,6 +899,333 @@
         reader.onerror = reject;
         reader.readAsDataURL(blob);
       });
+    }
+
+    // ===================== OneDrive（Microsoft Graph, OAuth2 PKCE） =====================
+    function odSettings() {
+      return {
+        clientId: localStorage.getItem('od_client_id') || '',
+        tenant: localStorage.getItem('od_tenant') || 'common',
+        folder: (localStorage.getItem('od_folder') || 'VoiceNotes').replace(/^\/+|\/+$/g, ''),
+        auto: localStorage.getItem('od_auto') === '1'
+      };
+    }
+
+    function odRedirectUri() {
+      return location.origin + location.pathname;
+    }
+
+    function odGetTokens() {
+      try { return JSON.parse(localStorage.getItem('od_tokens') || 'null'); } catch (e) { return null; }
+    }
+
+    function odIsConnected() {
+      return !!odGetTokens()?.refresh_token;
+    }
+
+    function base64Url(bytes) {
+      return btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    }
+
+    async function odConnect() {
+      const { clientId, tenant } = odSettings();
+      if (!clientId) { alert('請先填入 OneDrive Client ID 並儲存設定'); return; }
+      const verifier = base64Url(crypto.getRandomValues(new Uint8Array(48)));
+      const challenge = base64Url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
+      const state = base64Url(crypto.getRandomValues(new Uint8Array(16)));
+      sessionStorage.setItem('od_pkce', JSON.stringify({ verifier, state }));
+      const params = new URLSearchParams({
+        client_id: clientId,
+        response_type: 'code',
+        redirect_uri: odRedirectUri(),
+        response_mode: 'query',
+        scope: 'offline_access Files.ReadWrite',
+        code_challenge: challenge,
+        code_challenge_method: 'S256',
+        state
+      });
+      location.href = `https://login.microsoftonline.com/${encodeURIComponent(tenant)}/oauth2/v2.0/authorize?${params}`;
+    }
+
+    async function handleOneDriveRedirect() {
+      const params = new URLSearchParams(location.search);
+      if (!params.has('code') && !params.has('error')) return;
+      const pkce = JSON.parse(sessionStorage.getItem('od_pkce') || 'null');
+      sessionStorage.removeItem('od_pkce');
+      history.replaceState(null, '', odRedirectUri());
+
+      if (params.has('error')) {
+        alert(`OneDrive 授權失敗：${params.get('error_description') || params.get('error')}`);
+        return;
+      }
+      if (!pkce || pkce.state !== params.get('state')) {
+        alert('OneDrive 授權狀態不符，請重新連結');
+        return;
+      }
+      try {
+        await odTokenRequest({
+          grant_type: 'authorization_code',
+          code: params.get('code'),
+          redirect_uri: odRedirectUri(),
+          code_verifier: pkce.verifier
+        });
+        toast('OneDrive 已連結');
+      } catch (e) {
+        alert(`OneDrive 取得權杖失敗：${e.message}`);
+      }
+    }
+
+    async function odTokenRequest(body) {
+      const { clientId, tenant } = odSettings();
+      const res = await fetch(`https://login.microsoftonline.com/${encodeURIComponent(tenant)}/oauth2/v2.0/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ client_id: clientId, scope: 'offline_access Files.ReadWrite', ...body })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error_description || data.error || `HTTP ${res.status}`);
+      localStorage.setItem('od_tokens', JSON.stringify({
+        access_token: data.access_token,
+        refresh_token: data.refresh_token,
+        expires_at: Date.now() + (data.expires_in - 120) * 1000
+      }));
+      return data.access_token;
+    }
+
+    async function odAccessToken() {
+      const t = odGetTokens();
+      if (!t?.refresh_token) throw new Error('尚未連結 OneDrive');
+      if (t.access_token && Date.now() < t.expires_at) return t.access_token;
+      try {
+        return await odTokenRequest({ grant_type: 'refresh_token', refresh_token: t.refresh_token });
+      } catch (e) {
+        localStorage.removeItem('od_tokens');
+        throw new Error(`OneDrive 授權已過期，請重新連結（${e.message}）`);
+      }
+    }
+
+    function odItemPath(name) {
+      const path = `${odSettings().folder}/${name}`;
+      return path.split('/').filter(Boolean).map(encodeURIComponent).join('/');
+    }
+
+    async function odUpload(name, blob) {
+      const token = await odAccessToken();
+      const graph = 'https://graph.microsoft.com/v1.0/me/drive/root:';
+      if (blob.size < 4 * 1024 * 1024) {
+        const res = await fetch(`${graph}/${odItemPath(name)}:/content`, {
+          method: 'PUT',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': blob.type || 'application/octet-stream' },
+          body: blob
+        });
+        if (!res.ok) throw new Error(`OneDrive 上傳失敗 (HTTP ${res.status})`);
+        return;
+      }
+      // 大檔：upload session，分段需為 320 KiB 倍數
+      const sessionRes = await fetch(`${graph}/${odItemPath(name)}:/createUploadSession`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item: { '@microsoft.graph.conflictBehavior': 'replace' } })
+      });
+      if (!sessionRes.ok) throw new Error(`OneDrive 建立上傳工作失敗 (HTTP ${sessionRes.status})`);
+      const { uploadUrl } = await sessionRes.json();
+      const chunkSize = 320 * 1024 * 10;
+      for (let start = 0; start < blob.size; start += chunkSize) {
+        const end = Math.min(start + chunkSize, blob.size);
+        const res = await fetch(uploadUrl, {
+          method: 'PUT',
+          headers: { 'Content-Range': `bytes ${start}-${end - 1}/${blob.size}` },
+          body: blob.slice(start, end)
+        });
+        if (!res.ok) throw new Error(`OneDrive 分段上傳失敗 (HTTP ${res.status})`);
+      }
+    }
+
+    async function backupToCloud(id, { silent = false, textOnly = false } = {}) {
+      const rec = await getRecord(id);
+      if (!rec) return;
+      const base = fileBaseName(rec);
+      try {
+        if (!textOnly) {
+          const mp3 = rec.mp3Status === 'done' ? await getBlob(`${id}:mp3`) : null;
+          const audio = mp3 || await getBlob(`${id}:orig`);
+          if (audio) await odUpload(`${base}.${mp3 ? 'mp3' : audioExt(rec.mimeType)}`, audio);
+        }
+        await odUpload(`${base}.md`, new Blob([buildMarkdown(rec)], { type: 'text/markdown' }));
+        await updateRecord(id, { cloud: { ok: true, at: Date.now(), audio: !textOnly || rec.cloud?.audio } });
+        if (!silent) toast('已備份到 OneDrive');
+      } catch (e) {
+        console.error(e);
+        await updateRecord(id, { cloud: { ok: false, at: Date.now(), error: e.message, audio: rec.cloud?.audio } });
+        toast(`OneDrive 備份失敗：${e.message}`);
+      }
+      renderHistory();
+    }
+
+    // ===================== 暫存紀錄列表 =====================
+    const STATUS_LABEL = {
+      recording: ['錄音中', 'bg-rose-100 text-rose-700'],
+      saved: ['已暫存', 'bg-amber-100 text-amber-700'],
+      processing: ['分析中', 'bg-indigo-100 text-indigo-700'],
+      done: ['完成', 'bg-emerald-100 text-emerald-700'],
+      failed: ['待重試', 'bg-rose-100 text-rose-700']
+    };
+
+    async function renderHistory() {
+      const list = document.getElementById('historyList');
+      let recs = [];
+      try { recs = await getAllRecords(); } catch (e) { console.error(e); }
+      recs.sort((a, b) => b.createdAt - a.createdAt);
+      list.innerHTML = '';
+      document.getElementById('historyEmpty').classList.toggle('hidden', recs.length > 0);
+
+      for (const rec of recs) {
+        const li = document.createElement('li');
+        li.className = 'px-4 py-3 space-y-2';
+
+        const top = document.createElement('div');
+        top.className = 'flex items-center justify-between gap-2';
+        const title = document.createElement('div');
+        title.className = 'min-w-0';
+        const t1 = document.createElement('p');
+        t1.className = 'text-sm font-medium text-slate-800 truncate';
+        t1.textContent = `${formatDateTime(rec.createdAt)} · ${rec.templateName || ''}`;
+        const t2 = document.createElement('p');
+        t2.className = 'text-[11px] text-slate-400';
+        const sizeText = rec.mp3Size ? `MP3 ${formatBytes(rec.mp3Size)}` : (rec.origSize ? formatBytes(rec.origSize) : '');
+        const cloudText = rec.cloud ? (rec.cloud.ok ? ' · ☁️ 已備份' : ' · ☁️ 備份失敗') : '';
+        t2.textContent = `${formatDuration(rec.durationSec || 0)}${sizeText ? ' · ' + sizeText : ''}${cloudText}`;
+        title.append(t1, t2);
+
+        const [label, cls] = STATUS_LABEL[rec.status] || [rec.status, 'bg-slate-100 text-slate-600'];
+        const badge = document.createElement('span');
+        badge.className = `shrink-0 text-[10px] font-semibold px-2 py-0.5 rounded-full ${cls}`;
+        badge.textContent = (rec.id === currentRec?.id) ? '錄音中' : label;
+        top.append(title, badge);
+        li.appendChild(top);
+
+        const note = rec.error || rec.note;
+        if (note) {
+          const p = document.createElement('p');
+          p.className = `text-[11px] break-words ${rec.error ? 'text-rose-500' : 'text-slate-500'}`;
+          p.textContent = note;
+          li.appendChild(p);
+        }
+
+        if (rec.status !== 'recording') {
+          const actions = document.createElement('div');
+          actions.className = 'flex flex-wrap gap-1.5';
+          const addBtn = (text, onClick, primary) => {
+            const b = document.createElement('button');
+            b.className = primary
+              ? 'px-2.5 py-1 bg-indigo-600 text-white text-[11px] font-medium rounded-lg active:scale-95'
+              : 'px-2.5 py-1 bg-white border border-slate-300 text-slate-700 text-[11px] rounded-lg active:scale-95';
+            b.textContent = text;
+            b.addEventListener('click', onClick);
+            actions.appendChild(b);
+          };
+          if (rec.status === 'done') addBtn('📄 查看', () => showResult(rec), true);
+          if (rec.status !== 'processing') addBtn(rec.status === 'done' ? '🔁 重新分析' : '🔁 重試分析', () => processRecording(rec.id), rec.status !== 'done');
+          addBtn('⬇️ 音檔', () => downloadAudio(rec.id));
+          addBtn('⬇️ 文字', () => downloadText(rec.id));
+          if (odIsConnected()) addBtn('☁️ 上傳', () => backupToCloud(rec.id));
+          if (rec.status !== 'processing') addBtn('🗑️', () => removeRecording(rec.id));
+          li.appendChild(actions);
+        }
+        list.appendChild(li);
+      }
+    }
+
+    async function downloadAudio(id) {
+      const rec = await getRecord(id);
+      const mp3 = await getBlob(`${id}:mp3`);
+      const blob = mp3 || await getBlob(`${id}:orig`);
+      if (!blob) { alert('找不到音檔'); return; }
+      downloadBlob(blob, `${fileBaseName(rec)}.${mp3 ? 'mp3' : audioExt(rec.mimeType)}`);
+    }
+
+    async function downloadText(id) {
+      const rec = await getRecord(id);
+      downloadBlob(new Blob([buildMarkdown(rec)], { type: 'text/markdown;charset=utf-8' }), `${fileBaseName(rec)}.md`);
+    }
+
+    async function removeRecording(id) {
+      if (!confirm('確定刪除這筆錄音與文字？（本機刪除，無法復原）')) return;
+      await deleteRecordingData(id);
+      if (currentResultRec?.id === id) document.getElementById('resultCard').classList.add('hidden');
+      renderHistory();
+      updateStorageInfo();
+    }
+
+    function buildMarkdown(rec) {
+      const lines = [
+        `# 語音筆記紀錄`,
+        ``,
+        `- 時間：${formatDateTime(rec.createdAt)}`,
+        `- 範本：${rec.templateName || ''}`,
+        `- 長度：${formatDuration(rec.durationSec || 0)}`,
+        `- 狀態：${(STATUS_LABEL[rec.status] || [rec.status])[0]}`,
+        ``
+      ];
+      if (rec.summary) lines.push(`## 結構化摘要`, ``, rec.summary, ``);
+      if (rec.transcript) lines.push(`## 逐字稿`, ``, rec.transcript, ``);
+      if (rec.liveTranscript) lines.push(`## 裝置即時辨識（備援）`, ``, rec.liveTranscript, ``);
+      return lines.join('\n');
+    }
+
+    // ===================== 工具函式 =====================
+    function setLoading(show, title, detail) {
+      document.getElementById('loadingIndicator').classList.toggle('hidden', !show);
+      if (title) document.getElementById('loadingTitle').textContent = title;
+      if (detail !== undefined) document.getElementById('loadingDetail').textContent = detail;
+    }
+
+    function toast(msg) {
+      const el = document.createElement('div');
+      el.className = 'fixed left-1/2 -translate-x-1/2 bottom-6 z-[60] max-w-[90vw] bg-slate-800 text-white text-xs px-4 py-2.5 rounded-xl shadow-lg';
+      el.textContent = msg;
+      document.body.appendChild(el);
+      setTimeout(() => el.remove(), 3500);
+    }
+
+    function downloadBlob(blob, filename) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    }
+
+    function audioExt(mimeType = '') {
+      if (mimeType.includes('mp4') || mimeType.includes('aac')) return 'm4a';
+      if (mimeType.includes('ogg')) return 'ogg';
+      return 'webm';
+    }
+
+    function fileBaseName(rec) {
+      const d = new Date(rec.createdAt);
+      const p = (n) => String(n).padStart(2, '0');
+      const stamp = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+      const name = (rec.templateName || '語音紀錄').replace(/[\\/:*?"<>|#%\s]+/g, '_').slice(0, 40);
+      return `${stamp}_${name}`;
+    }
+
+    function formatDateTime(ts) {
+      return new Date(ts).toLocaleString('zh-TW', { hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+    }
+
+    function formatDuration(sec) {
+      return `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`;
+    }
+
+    function formatBytes(n) {
+      if (!n) return '0 B';
+      const u = ['B', 'KB', 'MB', 'GB'];
+      const i = Math.min(u.length - 1, Math.floor(Math.log(n) / Math.log(1024)));
+      return `${(n / Math.pow(1024, i)).toFixed(i ? 1 : 0)} ${u[i]}`;
     }
 
     function startTimer() {
@@ -517,7 +1257,7 @@
         btn.classList.replace('shadow-rose-500/30', 'shadow-slate-800/30');
         icon.classList.remove('w-6', 'h-6', 'rounded-full');
         icon.classList.add('w-5', 'h-5', 'rounded-sm');
-        status.textContent = '錄音中... 點擊按鈕停止並分析';
+        status.textContent = '錄音中（每 3 秒自動暫存）... 點擊停止並分析';
       } else {
         btn.classList.replace('bg-slate-800', 'bg-rose-500');
         btn.classList.replace('shadow-slate-800/30', 'shadow-rose-500/30');
@@ -604,26 +1344,24 @@
       });
 
       document.getElementById('btnDownloadMd').addEventListener('click', () => {
-        const text = `# 語音筆記紀錄\n\n## 結構化摘要\n\n${fullFinalResponse.summary}\n\n## 逐字稿\n\n${fullFinalResponse.transcript}`;
-        const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `語音紀錄_${new Date().toISOString().slice(0,10)}.md`;
-        a.click();
-        URL.revokeObjectURL(url);
+        if (currentResultRec) downloadText(currentResultRec.id);
       });
 
       document.getElementById('btnOpenSettings').addEventListener('click', openSettingsModal);
       document.getElementById('btnCloseSettings').addEventListener('click', closeSettingsModal);
       document.getElementById('btnSaveApiKey').addEventListener('click', () => {
-        const key = document.getElementById('apiKeyInput').value.trim();
-        const model = document.getElementById('modelNameInput').value.trim() || 'gemini-3.8-flash';
-        if (key) {
-          localStorage.setItem('gemini_api_key', key);
-          localStorage.setItem('gemini_model_name', model);
-          closeSettingsModal();
-        }
+        saveSettingsFromForm();
+        closeSettingsModal();
+        renderHistory();
+      });
+      document.getElementById('btnOdConnect').addEventListener('click', () => {
+        saveSettingsFromForm();
+        odConnect();
+      });
+      document.getElementById('btnOdDisconnect').addEventListener('click', () => {
+        localStorage.removeItem('od_tokens');
+        updateOdStatus();
+        renderHistory();
       });
 
       document.getElementById('btnOpenTemplates').addEventListener('click', openTemplateModal);
@@ -644,9 +1382,42 @@
     }
 
     function openSettingsModal() {
+      const od = odSettings();
       document.getElementById('apiKeyInput').value = localStorage.getItem('gemini_api_key') || '';
-      document.getElementById('modelNameInput').value = localStorage.getItem('gemini_model_name') || 'gemini-3.8-flash';
+      document.getElementById('modelNameInput').value = localStorage.getItem('gemini_model_name') || DEFAULT_MODEL;
+      document.getElementById('retryCountInput').value = getRetryCount();
+      document.getElementById('odClientIdInput').value = od.clientId;
+      document.getElementById('odTenantInput').value = localStorage.getItem('od_tenant') || '';
+      document.getElementById('odFolderInput').value = localStorage.getItem('od_folder') || '';
+      document.getElementById('odAutoInput').checked = od.auto;
+      document.getElementById('odRedirectHint').textContent = odRedirectUri();
+      updateOdStatus();
       document.getElementById('settingsModal').classList.remove('hidden');
+    }
+
+    function saveSettingsFromForm() {
+      const setOrRemove = (k, v) => v ? localStorage.setItem(k, v) : localStorage.removeItem(k);
+      const key = document.getElementById('apiKeyInput').value.trim();
+      if (key) localStorage.setItem('gemini_api_key', key);
+      localStorage.setItem('gemini_model_name', document.getElementById('modelNameInput').value.trim() || DEFAULT_MODEL);
+      const retry = parseInt(document.getElementById('retryCountInput').value, 10);
+      localStorage.setItem('gemini_retry_count', String(Number.isFinite(retry) ? Math.max(0, Math.min(5, retry)) : 3));
+      const prevClient = localStorage.getItem('od_client_id') || '';
+      const prevTenant = localStorage.getItem('od_tenant') || '';
+      const clientId = document.getElementById('odClientIdInput').value.trim();
+      const tenant = document.getElementById('odTenantInput').value.trim();
+      setOrRemove('od_client_id', clientId);
+      setOrRemove('od_tenant', tenant);
+      setOrRemove('od_folder', document.getElementById('odFolderInput').value.trim());
+      localStorage.setItem('od_auto', document.getElementById('odAutoInput').checked ? '1' : '0');
+      if (clientId !== prevClient || tenant !== prevTenant) localStorage.removeItem('od_tokens');
+    }
+
+    function updateOdStatus() {
+      const el = document.getElementById('odStatus');
+      const connected = odIsConnected();
+      el.textContent = connected ? '✅ 已連結' : '未連結';
+      el.className = `text-[10px] ${connected ? 'text-emerald-600' : 'text-slate-400'}`;
     }
 
     function closeSettingsModal() {
