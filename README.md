@@ -10,13 +10,9 @@
 - 每筆紀錄可下載 MP3 與 Markdown（含裝置即時辨識的備援文字）。
 - iOS 建議「加入主畫面」使用，避免 Safari 清除久未開啟網站的本機資料。
 
-## OneDrive 備份（選用）
-1. 用個人 Microsoft 帳號登入 [Azure Portal](https://portal.azure.com/) → Microsoft Entra ID → 應用程式註冊 → 新增註冊。
-   - **支援的帳戶類型**：選「任何組織目錄中的帳戶及個人 Microsoft 帳戶」或「僅限個人 Microsoft 帳戶」。選錯會出現 `unauthorized_client ... not enabled for consumers`。
-   - 已建立的應用程式：資訊清單 (Manifest) 把 `signInAudience` 改成 `AzureADandPersonalMicrosoftAccount`，並把 `api.requestedAccessTokenVersion` 設為 `2`。
-2. 驗證 → 新增平台 → **單頁應用程式 (SPA)**，Redirect URI 填 `https://kunjulin.github.io/voice-notes/`（結尾要有 `/`）。
-3. API 權限 → Microsoft Graph → 委派：`Files.ReadWrite`、`offline_access`。
-4. 複製「應用程式 (用戶端) 識別碼」貼到 App 設定，Tenant 留空（= consumers，個人帳號），按「連結 OneDrive」，再按「測試連線」確認。
-5. 請用 **Safari** 開啟（不要在 team+、LINE 等 App 的內建瀏覽器中開啟），並加入主畫面。
+## 分享與備份
+結果卡與每筆暫存紀錄都有「📤 分享」，透過 iPhone 分享選單：
+- **音檔＋文字檔／只有文字檔／只有音檔**：選「儲存到檔案」可存進 iCloud Drive，或已安裝的 OneDrive、Google Drive 資料夾；也可傳 AirDrop、LINE、Email。
+- **純文字內容**：直接貼到備忘錄、LINE 或病歷系統。
 
-Microsoft 規定網頁 App（SPA）的授權每 24 小時要重新連結一次；過期時錄音仍保留在本機，重新連結後按「☁️ 上傳」補傳。
+不需要任何雲端帳號設定；瀏覽器不支援分享選單時會改為下載。
