@@ -259,10 +259,55 @@
     const DEFAULT_TEMPLATES = [
       {
         id: "clinic",
-        name: "醫療諮詢與門診病歷 (SOAP)",
+        name: "English Outpatient Clinic Note",
         isDefault: true,
-        speakerHint: "男聲=醫師，女聲=病患（或家屬）",
-        prompt: `### 【門診諮詢病歷摘要 (Clinic Summary)】\n- 主訴 (Chief Complaint, CC)：[病患就醫主要原因、發作時間與部位]\n- 現病史 (History of Present Illness, HPI)：\n  * 症狀特徵與變化進程：[誘發/緩解因子、嚴重度變化]\n  * 目前用藥與過敏史：[提及之西藥、中藥、保健品或藥物過敏史，無則註明「無提及」]\n- 醫病對話與病患顧慮：\n  * 病患主要擔憂：[關心的生活影響、疑慮或預後問題]\n- 醫師評估與診斷方向 (Assessment)：\n  * 臨床初步印象：[醫師提出的可能診斷或鑑別方向]\n- 處置計畫與衛教事項 (Plan)：\n  * 檢驗/檢查開立：[安排之抽血、影像或生理檢查]\n  * 處方與治療調整：[開立藥物、劑量調整或非藥物處置]\n  * 衛教與生活型態建議：[飲食、運動、生活注意事項]\n  * 回診追蹤時間：[預計回診時間或需立即就醫的危險徵兆 (Red flags)]`
+        speakerHint: "Doctor = 男聲；Patient / family = 女聲",
+        prompt: `[Documentation rules — follow these, do not print this block]
+- Write the entire note in concise, professional English clinical style using standard abbreviations (e.g., HTN, DM, CKD, SOB, PRN, BID, NKDA).
+- Translate Mandarin / Taiwanese / Hakka speech into precise English medical terminology. Keep drug names as spoken (generic or brand) with dose, route and frequency.
+- Document ONLY what is explicitly stated in the audio. Never infer vital signs, exam findings, results or diagnoses. If an item was not discussed, write "Not discussed".
+- Include pertinent negatives only when explicitly stated. Mark inaudible or ambiguous content as [unclear].
+- Distinguish patient-reported information from clinician statements where it matters.
+
+### OUTPATIENT CLINIC NOTE
+
+**Chief Complaint (CC):** [Main reason for visit, with duration]
+
+**History of Present Illness (HPI):**
+[Narrative paragraph — age/sex if stated; onset, location, duration, character, aggravating/alleviating factors, radiation, timing, severity; associated symptoms; prior work-up and treatment; interval course since last visit]
+
+**Past Medical History (PMH):** [...]
+**Past Surgical History (PSH):** [...]
+**Medications:**
+- [Drug] [dose] [route] [frequency] (include supplements / TCM if mentioned)
+
+**Allergies:** [Agent — reaction] / NKDA (only if stated)
+**Family History (FHx):** [...]
+**Social History (SHx):** [Tobacco, alcohol, occupation, living situation, functional status]
+
+**Review of Systems (ROS):** [Pertinent positives and negatives explicitly stated]
+
+**Physical Examination:** [Vital signs and findings only as verbalized during the visit]
+
+**Data Reviewed:** [Laboratory, imaging, nuclear medicine, pathology or other results discussed — with dates and key values]
+
+**Assessment:**
+1. [Problem / diagnosis] — [status: new / stable / improving / worsening; key supporting findings]
+   - DDx: [Differential diagnoses mentioned by the clinician]
+
+**Plan:**
+1. [Problem]
+   - Diagnostics: [Tests / imaging ordered]
+   - Therapeutics: [New / changed / discontinued medications with dose; non-pharmacological measures]
+   - Counseling / Education: [...]
+   - Referral: [...]
+
+**Patient Concerns & Shared Decision-Making:** [Questions raised, preferences, risks/benefits discussed]
+
+**Follow-up:** [Return interval; red-flag / return precautions given]
+
+**Suggested ICD-10-CM (reference only — verify before use):**
+- [Code] — [Description]`
       },
       {
         id: "meeting",
@@ -279,6 +324,9 @@
         prompt: `### 【演講紀實】\n- 演講主題：[完整主題]\n- 主持人引言亮點：[講者特色、開場點出的核心問題]\n- 講者核心論點精華：\n  1. [論點 1：核心主張與背景]\n  2. [論點 2：實務案例或關鍵方法]\n  3. [論點 3：未來趨勢或前瞻展望]\n- 講者經典金句摘錄：\n  * 「[演講中令人印象深刻的原句]」\n\n---\n\n### 【臉書社群文案（可直接複製發布）】\n【標題：用一句具衝擊力的話吸引受眾】\n\n今天在聽這場演講時，講者點出幾個關鍵洞見，整理給大家：\n\n📌 [重點一小標題]\n[簡述核心邏輯，好吸收的口語化表達]\n\n📌 [重點二小標題]\n[簡述核心邏輯，好吸收的口語化表達]\n\n💡 講者最震撼的一句話：\n「[金句摘錄]」\n\n#演講筆記 #知識萃取 #專業洞察`
       }
     ];
+
+    // 舊版預設門診範本：若使用者未修改過，載入時自動升級為新版
+    const LEGACY_CLINIC_PROMPT = `### 【門診諮詢病歷摘要 (Clinic Summary)】\n- 主訴 (Chief Complaint, CC)：[病患就醫主要原因、發作時間與部位]\n- 現病史 (History of Present Illness, HPI)：\n  * 症狀特徵與變化進程：[誘發/緩解因子、嚴重度變化]\n  * 目前用藥與過敏史：[提及之西藥、中藥、保健品或藥物過敏史，無則註明「無提及」]\n- 醫病對話與病患顧慮：\n  * 病患主要擔憂：[關心的生活影響、疑慮或預後問題]\n- 醫師評估與診斷方向 (Assessment)：\n  * 臨床初步印象：[醫師提出的可能診斷或鑑別方向]\n- 處置計畫與衛教事項 (Plan)：\n  * 檢驗/檢查開立：[安排之抽血、影像或生理檢查]\n  * 處方與治療調整：[開立藥物、劑量調整或非藥物處置]\n  * 衛教與生活型態建議：[飲食、運動、生活注意事項]\n  * 回診追蹤時間：[預計回診時間或需立即就醫的危險徵兆 (Red flags)]`;
 
     let templates = [];
     let mediaRecorder = null;
@@ -333,6 +381,7 @@
       if (stored) {
         try {
           templates = JSON.parse(stored);
+          upgradeDefaultTemplates();
         } catch (e) {
           templates = [...DEFAULT_TEMPLATES];
         }
@@ -341,6 +390,19 @@
         saveTemplates();
       }
       renderTemplateDropdown();
+    }
+
+    function upgradeDefaultTemplates() {
+      let changed = false;
+      templates = templates.map(t => {
+        const def = DEFAULT_TEMPLATES.find(d => d.id === t.id);
+        if (def && t.isDefault && t.id === 'clinic' && t.prompt === LEGACY_CLINIC_PROMPT) {
+          changed = true;
+          return { ...def };
+        }
+        return t;
+      });
+      if (changed) saveTemplates();
     }
 
     function saveTemplates() {
@@ -861,7 +923,7 @@
       const systemPrompt = `你是一個具備專業多語言聽力與說話者分析專長的助理。
 【原則】
 1. 事實檢查思考：嚴格依據音訊內容轉錄與摘要，切勿憑空想像。
-2. 語言處理：音訊中可能混雜國語、英語、台語、客家話。逐字稿請忠實呈現（台語客語盡量以合適漢字表達），摘要請統一以台灣正體中文歸納。
+2. 語言處理：音訊中可能混雜國語、英語、台語、客家話。逐字稿請忠實呈現（台語客語盡量以合適漢字表達），摘要語言依範本指定（範本以英文撰寫或要求英文時，摘要全程使用英文），範本未指定時以台灣正體中文歸納；逐字稿維持原語言，不要翻譯。
 3. 說話者分離：請依聲音特徵區分說話者。${speakerHint ? `參考提示：${speakerHint}` : '無特定身分時請標示「說話者 A」、「說話者 B」等。'}
 
 【輸出結構要求】
