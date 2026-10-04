@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>智慧語音筆記</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Marked.js 用於渲染 Markdown -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    /* 針對 iOS 螢幕安全區域與流暢滑動最佳化 */
+    body {
+      padding-top: env(safe-area-inset-top);
+      padding-bottom: env(safe-area-inset-bottom);
+      -webkit-tap-highlight-color: transparent;
+    }
+    .wave-bar {
+      transition: height 0.08s ease;
+    }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen flex flex-col font-sans antialiased">
+
+  <!-- 頂部導覽列 -->
+  <header class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
+    <div class="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
+      <div class="flex items-center space-x-2">
+        <span class="text-2xl">🎙️</span>
+        <h1 class="text-lg font-bold text-slate-800 tracking-tight">語音智慧筆記</h1>
+      </div>
+      <div class="flex items-center space-x-2">
+        <button id="btnOpenTemplates" class="p-2 text-slate-600 hover:text-indigo-600 rounded-lg hover:bg-slate-100 text-sm flex items-center gap-1">
+          <span>⚙️ 範本</span>
+        </button>
+        <button id="btnOpenSettings" class="p-2 text-slate-600 hover:text-indigo-600 rounded-lg hover:bg-slate-100 text-sm flex items-center gap-1">
+          <span>🔑 API</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- 主內容容器 -->
+  <main class="flex-1 max-w-2xl w-full mx-auto p-4 space-y-4">
+
+    <!-- 範本挑選與提示設定卡片 -->
+    <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-200/80 space-y-3">
+      <div>
+        <label class="block text-xs font-semibold text-slate-500 mb-1">摘要範本</label>
+        <select id="templateSelect" class="w-full bg-slate-50 border border-slate-300 text-slate-800 text-sm rounded-xl p-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+          <!-- 動態載入範本列表 -->
+        </select>
+      </div>
+
+      <div>
+        <div class="flex justify-between items-center mb-1">
+          <label class="text-xs font-semibold text-slate-500">說話者身分提示（選填）</label>
+          <span class="text-[10px] text-slate-400">輔助區分說話者與角色</span>
+        </div>
+        <input type="text" id="speakerHintInput" placeholder="例如：男聲=醫師，女聲=病患" class="w-full bg-slate-50 border border-slate-300 text-slate-800 text-sm rounded-xl p-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+      </div>
+    </div>
+
+    <!-- 錄音控制區塊 -->
+    <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200/80 flex flex-col items-center justify-center space-y-4">
+      <!-- 錄音計時與音波 -->
+      <div class="text-center">
+        <div id="recordingTimer" class="text-3xl font-mono font-bold text-slate-700 tracking-wider">00:00</div>
+        <p id="recordingStatus" class="text-xs text-slate-400 mt-1">點擊下方按鈕開始錄音</p>
+      </div>
+
+      <!-- 動態音波可視化 -->
+      <div id="visualizer" class="flex items-center justify-center gap-1 h-8 w-48">
+        <div class="wave-bar w-1.5 bg-slate-300 h-2 rounded-full"></div>
+        <div class="wave-bar w-1.5 bg-slate-300 h-2 rounded-full"></div>
+        <div class="wave-bar w-1.5 bg-slate-300 h-2 rounded-full"></div>
+        <div class="wave-bar w-1.5 bg-slate-300 h-2 rounded-full"></div>
+        <div class="wave-bar w-1.5 bg-slate-300 h-2 rounded-full"></div>
+        <div class="wave-bar w-1.5 bg-slate-300 h-2 rounded-full"></div>
+        <div class="wave-bar w-1.5 bg-slate-300 h-2 rounded-full"></div>
+        <div class="wave-bar w-1.5 bg-slate-300 h-2 rounded-full"></div>
+      </div>
+
+      <!-- 控制按鈕 -->
+      <div class="flex items-center gap-4">
+        <button id="btnToggleRecord" class="w-16 h-16 rounded-full bg-rose-500 text-white flex items-center justify-center shadow-lg shadow-rose-500/30 hover:bg-rose-600 active:scale-95 transition-all">
+          <span id="recordIcon" class="w-6 h-6 rounded-full bg-white transition-all"></span>
+        </button>
+      </div>
+    </div>
+
+    <!-- 錄音中：即時轉錄與即時意圖輔助窗 -->
+    <div id="liveTranscriptCard" class="hidden bg-amber-50/80 border border-amber-200/80 rounded-2xl p-4 shadow-sm space-y-2">
+      <div class="flex items-center justify-between">
+        <span class="flex items-center gap-1.5 text-xs font-bold text-amber-800">
+          <span class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span> 即時語音監控（iOS 本機辨識）
+        </span>
+        <span class="text-[10px] text-amber-600">無延遲預覽</span>
+      </div>
+      <p id="liveTranscriptText" class="text-sm text-slate-700 italic min-h-[1.5rem] break-words">正在聆聽語音...</p>
+    </div>
+
+    <!-- 處理中載入指示 -->
+    <div id="loadingIndicator" class="hidden bg-white rounded-2xl p-6 shadow-sm border border-slate-200/80 text-center space-y-3">
+      <div class="inline-block animate-spin w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full"></div>
+      <p class="text-sm font-medium text-slate-700">Gemini 2.0 Flash 正在深度辨識多語言與整理摘要...</p>
+      <p class="text-xs text-slate-400">正在分析國語、英語、台語、客語並進行說話者分離</p>
+    </div>
+
+    <!-- 分析結果區域 -->
+    <div id="resultCard" class="hidden bg-white rounded-2xl shadow-sm border border-slate-200/80 overflow-hidden">
+      <!-- 標籤頁切換 -->
+      <div class="flex border-b border-slate-200 bg-slate-50/50">
+        <button id="tabSummary" class="flex-1 py-3 text-sm font-semibold text-indigo-600 border-b-2 border-indigo-600">結構化摘要</button>
+        <button id="tabTranscript" class="flex-1 py-3 text-sm font-semibold text-slate-500 border-b-2 border-transparent hover:text-slate-700">多語言逐字稿</button>
+      </div>
+
+      <!-- 內容區 -->
+      <div class="p-4">
+        <div id="summaryContent" class="prose prose-sm max-w-none text-slate-800 leading-relaxed"></div>
+        <div id="transcriptContent" class="hidden prose prose-sm max-w-none text-slate-800 leading-relaxed font-mono whitespace-pre-wrap"></div>
+      </div>
+
+      <!-- 底部動作按鈕 -->
+      <div class="bg-slate-50 px-4 py-3 border-t border-slate-200 flex justify-end gap-2">
+        <button id="btnCopyResult" class="px-3 py-1.5 bg-white border border-slate-300 text-slate-700 text-xs font-medium rounded-lg hover:bg-slate-50 active:scale-95 transition-all">📋 複製內容</button>
+        <button id="btnDownloadMd" class="px-3 py-1.5 bg-indigo-600 text-white text-xs font-medium rounded-lg hover:bg-indigo-700 active:scale-95 transition-all">💾 下載 Markdown</button>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- 彈出視窗：範本管理與編輯器 -->
+  <div id="templateModal" class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-lg w-full max-h-[90vh] flex flex-col shadow-xl overflow-hidden">
+      <div class="p-4 border-b border-slate-200 flex justify-between items-center">
+        <h3 class="font-bold text-slate-800">範本編輯器</h3>
+        <button id="btnCloseTemplateModal" class="text-slate-400 hover:text-slate-600 text-lg font-bold">&times;</button>
+      </div>
+      <div class="p-4 overflow-y-auto space-y-4 flex-1">
+        <div>
+          <label class="block text-xs font-semibold text-slate-500 mb-1">編輯中的範本</label>
+          <div class="flex gap-2">
+            <select id="modalTemplateSelect" class="flex-1 bg-slate-50 border border-slate-300 text-xs rounded-lg p-2">
+            </select>
+            <button id="btnNewTemplate" class="px-2.5 py-1.5 bg-slate-100 text-slate-700 text-xs rounded-lg border border-slate-300 font-medium">＋ 新增</button>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-500 mb-1">範本名稱</label>
+          <input type="text" id="tplNameInput" class="w-full bg-slate-50 border border-slate-300 text-sm rounded-lg p-2 focus:ring-1 focus:ring-indigo-500">
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-500 mb-1">預設說話者提示範例</label>
+          <input type="text" id="tplSpeakerInput" class="w-full bg-slate-50 border border-slate-300 text-sm rounded-lg p-2 focus:ring-1 focus:ring-indigo-500">
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-500 mb-1">結構化摘要提示詞 (Prompt 格式)</label>
+          <textarea id="tplPromptInput" rows="9" class="w-full font-mono text-xs bg-slate-50 border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-indigo-500 leading-relaxed"></textarea>
+        </div>
+      </div>
+      <div class="p-3 bg-slate-50 border-t border-slate-200 flex justify-between items-center">
+        <button id="btnResetDefaults" class="text-xs text-rose-500 hover:underline">還原原廠預設</button>
+        <div class="flex gap-2">
+          <button id="btnDeleteTemplate" class="px-3 py-1.5 bg-rose-50 text-rose-600 text-xs rounded-lg border border-rose-200 font-medium">刪除</button>
+          <button id="btnSaveTemplate" class="px-4 py-1.5 bg-indigo-600 text-white text-xs rounded-lg font-medium">儲存範本</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 彈出視窗：API 金鑰設定 -->
+  <div id="settingsModal" class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-sm w-full p-5 shadow-xl space-y-4">
+      <h3 class="font-bold text-slate-800 text-base">Gemini API Key 設定</h3>
+      <p class="text-xs text-slate-500 leading-relaxed">
+        本應用程式完全運行於您的瀏覽器中，API Key 僅保存在手機的本機空間（LocalStorage），不會上傳至任何伺服器。
+      </p>
+      <div>
+        <input type="password" id="apiKeyInput" placeholder="請在此貼上 AI Studio API Key" class="w-full bg-slate-50 border border-slate-300 text-sm rounded-xl p-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+      </div>
+      <div class="text-[11px] text-indigo-600">
+        <a href="https://aistudio.google.com/" target="_blank" class="underline">前往 Google AI Studio 免費領取金鑰 &rarr;</a>
+      </div>
+      <div class="flex justify-end gap-2 pt-2">
+        <button id="btnCloseSettings" class="px-3 py-1.5 text-xs text-slate-600">取消</button>
+        <button id="btnSaveApiKey" class="px-4 py-1.5 bg-indigo-600 text-white text-xs font-medium rounded-lg">儲存設定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 主邏輯程式碼 -->
+  <script>
+    // --- 預設三大情境範本資料 ---
+    const DEFAULT_TEMPLATES = [
+      {
+        id: "clinic",
+        name: "醫療諮詢與門診病歷 (SOAP)",
+        isDefault: true,
+        speakerHint: "男聲=醫師，女聲=病患（或家屬）",
+        prompt: `### 【門診諮詢病歷摘要 (Clinic Summary)】\n- 主訴 (Chief Complaint, CC)：[病患就醫主要原因、發作時間與部位]\n- 現病史 (History of Present Illness, HPI)：\n  * 症狀特徵與變化進程：[誘發/緩解因子、嚴重度變化]\n  * 目前用藥與過敏史：[提及之西藥、中藥、保健品或藥物過敏史，無則註明「無提及」]\n- 醫病對話與病患顧慮：\n  * 病患主要擔憂：[關心的生活影響、疑慮或預後問題]\n- 醫師評估與診斷方向 (Assessment)：\n  * 臨床初步印象：[醫師提出的可能診斷或鑑別方向]\n- 處置計畫與衛教事項 (Plan)：\n  * 檢驗/檢查開立：[安排之抽血、影像或生理檢查]\n  * 處方與治療調整：[開立藥物、劑量調整或非藥物處置]\n  * 衛教與生活型態建議：[飲食、運動、生活注意事項]\n  * 回診追蹤時間：[預計回診時間或需立即就醫的危險徵兆 (Red flags)]`
+      },
+      {
+        id: "meeting",
+        name: "多人會議記錄與決策亮點",
+        isDefault: true,
+        speakerHint: "說話者A=主持主席，說話者B=技術主管，說話者C=營運代表",
+        prompt: `### 【會議核心資訊】\n- 會議主題：[簡述 1-2 句核心主旨]\n- 出席發言角色：[整理音訊中出現的各說話者與其代表立場]\n\n### 【各議題討論與各方立場】\n- 議題討論：[摘要各說話者發言觀點、數據或提案]\n\n### 【分析亮點 (Strategic Highlights)】\n- 關鍵共識與重大突破：[各方拍板達成一致的關鍵事項]\n- 潛在風險與分歧點：[會中提出的疑慮、未完全解決的爭議或潛在外部風險]\n- 核心效益與價值：[該決議對組織或專案帶來的實質效益]\n\n### 【決議事項與待辦追蹤 (Action Items)】\n- [ ] [待辦事項 1]｜負責人：[人名/角色]｜時程：[時間]`
+      },
+      {
+        id: "speech",
+        name: "演講紀錄與社群傳播文案",
+        isDefault: true,
+        speakerHint: "說話者A=會議引言/主持人，說話者B=主講者",
+        prompt: `### 【演講紀實】\n- 演講主題：[完整主題]\n- 主持人引言亮點：[講者特色、開場點出的核心問題]\n- 講者核心論點精華：\n  1. [論點 1：核心主張與背景]\n  2. [論點 2：實務案例或關鍵方法]\n  3. [論點 3：未來趨勢或前瞻展望]\n- 講者經典金句摘錄：\n  * 「[演講中令人印象深刻的原句]」\n\n---\n\n### 【臉書社群文案（可直接複製發布）】\n【標題：用一句具衝擊力的話吸引受眾】\n\n今天在聽這場演講時，講者點出幾個關鍵洞見，整理給大家：\n\n📌 [重點一小標題]\n[簡述核心邏輯，好吸收的口語化表達]\n\n📌 [重點二小標題]\n[簡述核心邏輯，好吸收的口語化表達]\n\n💡 講者最震撼的一句話：\n「[金句摘錄]」\n\n#演講筆記 #知識萃取 #專業洞察`
+      }
+    ];
+
+    // --- 全域狀態 ---
+    let templates = [];
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let isRecording = false;
+    let timerInterval = null;
+    let secondsElapsed = 0;
+    let audioContext = null;
+    let analyser = null;
+    let animFrameId = null;
+    let wakeLock = null;
+    let speechRecognizer = null;
+    let fullFinalResponse = { summary: "", transcript: "" };
+
+    // --- 初始化流程 ---
+    window.addEventListener('DOMContentLoaded', () => {
+      loadTemplates();
+      setupUIEventListeners();
+      checkApiKeyPrompt();
+    });
+
+    // --- 範本資料庫管理 (LocalStorage) ---
+    function loadTemplates() {
+      const stored = localStorage.getItem('voice_templates');
+      if (stored) {
+        try {
+          templates = JSON.parse(stored);
+        } catch (e) {
+          templates = [...DEFAULT_TEMPLATES];
+        }
+      } else {
+        templates = [...DEFAULT_TEMPLATES];
+        saveTemplates();
+      }
+      renderTemplateDropdown();
+    }
+
+    function saveTemplates() {
+      localStorage.setItem('voice_templates', JSON.stringify(templates));
+    }
+
+    function renderTemplateDropdown() {
+      const select = document.getElementById('templateSelect');
+      const currentSelected = select.value;
+      select.innerHTML = '';
+      templates.forEach((t) => {
+        const opt = document.createElement('option');
+        opt.value = t.id;
+        opt.textContent = t.name;
+        select.appendChild(opt);
+      });
+      if (currentSelected && templates.some(t => t.id === currentSelected)) {
+        select.value = currentSelected;
+      } else if (templates.length > 0) {
+        select.value = templates[0].id;
+      }
+      onTemplateChange();
+    }
+
+    function onTemplateChange() {
+      const current = templates.find(t => t.id === document.getElementById('templateSelect').value);
+      if (current) {
+        document.getElementById('speakerHintInput').value = current.speakerHint || '';
+      }
+    }
+
+    // --- 錄音功能與 iOS Safari 相容性 ---
+    async function toggleRecording() {
+      if (!isRecording) {
+        await startRecording();
+      } else {
+        await stopRecording();
+      }
+    }
+
+    async function startRecording() {
+      const apiKey = localStorage.getItem('gemini_api_key');
+      if (!apiKey) {
+        openSettingsModal();
+        alert('請先設定 Google Gemini API Key 才能執行辨識。');
+        return;
+      }
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        
+        // 優先支援 iOS Safari 的 audio/mp4 格式
+        let mimeType = 'audio/mp4';
+        if (!MediaRecorder.isTypeSupported('audio/mp4')) {
+          mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '';
+        }
+
+        mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+        audioChunks = [];
+
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0) audioChunks.push(e.data);
+        };
+
+        mediaRecorder.start(250); // 每 250ms 蒐集一次 chunk
+        isRecording = true;
+
+        // 啟動螢幕防休眠
+        requestWakeLock();
+
+        // 啟動計時器與動態波形
+        startTimer();
+        setupVisualizer(stream);
+
+        // 啟動 iOS 即時聽寫辨識
+        startLiveSpeechRecognition();
+
+        // 更新介面狀態
+        updateRecordingUI(true);
+
+      } catch (err) {
+        console.error('無法啟動錄音：', err);
+        alert('無法取得麥克風權限。請確認已允許瀏覽器使用麥克風。');
+      }
+    }
+
+    async function stopRecording() {
+      if (!mediaRecorder || !isRecording) return;
+
+      isRecording = false;
+      stopTimer();
+      stopVisualizer();
+      stopLiveSpeechRecognition();
+      releaseWakeLock();
+      updateRecordingUI(false);
+
+      // 停止 MediaStream 的音訊軌道釋放麥克風
+      mediaRecorder.stream.getTracks().forEach(track => track.stop());
+
+      // 顯示載入中指示
+      document.getElementById('loadingIndicator').classList.remove('hidden');
+      document.getElementById('resultCard').classList.add('hidden');
+
+      mediaRecorder.onstop = async () => {
+        const mimeType = mediaRecorder.mimeType || 'audio/mp4';
+        const audioBlob = new Blob(audioChunks, { type: mimeType });
+        await processAudioWithGemini(audioBlob, mimeType);
+      };
+    }
+
+    // --- iOS WebKit 即時語音聽寫引擎 ---
+    function startLiveSpeechRecognition() {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) return;
+
+      try {
+        speechRecognizer = new SpeechRecognition();
+        speechRecognizer.continuous = true;
+        speechRecognizer.interimResults = true;
+        speechRecognizer.lang = 'zh-TW';
+
+        const liveCard = document.getElementById('liveTranscriptCard');
+        const liveText = document.getElementById('liveTranscriptText');
+        liveCard.classList.remove('hidden');
+        liveText.textContent = '聆聽中...';
+
+        speechRecognizer.onresult = (event) => {
+          let text = '';
+          for (let i = event.resultIndex; i < event.results.length; ++i) {
+            text += event.results[i][0].transcript;
+          }
+          if (text.trim()) liveText.textContent = text;
+        };
+
+        speechRecognizer.onerror = () => {};
+        speechRecognizer.start();
+      } catch (e) {
+        console.warn('即時辨識不支援或初始化失敗', e);
+      }
+    }
+
+    function stopLiveSpeechRecognition() {
+      if (speechRecognizer) {
+        try { speechRecognizer.stop(); } catch(e) {}
+        speechRecognizer = null;
+      }
+      document.getElementById('liveTranscriptCard').classList.add('hidden');
+    }
+
+    // --- 串接 Gemini 2.0 Flash 免費 API ---
+    async function processAudioWithGemini(audioBlob, mimeType) {
+      const apiKey = localStorage.getItem('gemini_api_key');
+      const base64Audio = await blobToBase64(audioBlob);
+      const selectedTpl = templates.find(t => t.id === document.getElementById('templateSelect').value) || templates[0];
+      const speakerHint = document.getElementById('speakerHintInput').value.trim();
+
+      const systemPrompt = `你是一個具備專業多語言聽力與說話者分析專長的助理。
+【原則】
+1. 事實檢查思考：嚴格依據音訊內容轉錄與摘要，切勿憑空想像。
+2. 語言處理：音訊中可能混雜國語、英語、台語、客家話。逐字稿請忠實呈現（台語客語盡量以合適漢字表達），摘要請統一以台灣正體中文歸納。
+3. 說話者分離：請依聲音特徵區分說話者。${speakerHint ? `參考提示：${speakerHint}` : '無特定身分時請標示「說話者 A」、「說話者 B」等。'}
+
+【輸出結構要求】
+你必須使用三個井號與特定標籤分開輸出，格式如下：
+<<<SUMMARY>>>
+(此處依照設定範本格式輸出摘要)
+<<<TRANSCRIPT>>>
+(此處輸出依時間序列區分說話者的完整逐字稿)`;
+
+      const userPrompt = `請分析這段錄音，並依照以下範本格式輸出：\n\n${selectedTpl.prompt}`;
+
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+
+      const payload = {
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        contents: [
+          {
+            role: "user",
+            parts: [
+              { text: userPrompt },
+              {
+                inlineData: {
+                  mimeType: mimeType.split(';')[0],
+                  data: base64Audio.split(',')[1]
+                }
+              }
+            ]
+          }
+        ],
+        generationConfig: {
+          temperature: 0.2
+        }
+      };
+
+      try {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+          const errData = await response.json();
+          throw new Error(errData.error?.message || 'Gemini API 呼叫失敗');
+        }
+
+        const data = await response.json();
+        const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        renderResults(rawText);
+
+      } catch (err) {
+        console.error(err);
+        alert(`處理失敗：${err.message}`);
+      } finally {
+        document.getElementById('loadingIndicator').classList.add('hidden');
+      }
+    }
+
+    function renderResults(rawText) {
+      let summary = rawText;
+      let transcript = '';
+
+      if (rawText.includes('<<<SUMMARY>>>') && rawText.includes('<<<TRANSCRIPT>>>')) {
+        const parts = rawText.split('<<<TRANSCRIPT>>>');
+        summary = parts[0].replace('<<<SUMMARY>>>', '').trim();
+        transcript = parts[1].trim();
+      }
+
+      fullFinalResponse = { summary, transcript };
+
+      document.getElementById('summaryContent').innerHTML = marked.parse(summary);
+      document.getElementById('transcriptContent').textContent = transcript || '（未產出分離逐字稿）';
+
+      document.getElementById('resultCard').classList.remove('hidden');
+      switchTab('summary');
+    }
+
+    // --- 輔助工具函式 ---
+    function blobToBase64(blob) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    }
+
+    function startTimer() {
+      secondsElapsed = 0;
+      updateTimerDisplay();
+      timerInterval = setInterval(() => {
+        secondsElapsed++;
+        updateTimerDisplay();
+      }, 1000);
+    }
+
+    function stopTimer() {
+      clearInterval(timerInterval);
+    }
+
+    function updateTimerDisplay() {
+      const mins = String(Math.floor(secondsElapsed / 60)).padStart(2, '0');
+      const secs = String(secondsElapsed % 60).padStart(2, '0');
+      document.getElementById('recordingTimer').textContent = `${mins}:${secs}`;
+    }
+
+    function updateRecordingUI(recording) {
+      const btn = document.getElementById('btnToggleRecord');
+      const icon = document.getElementById('recordIcon');
+      const status = document.getElementById('recordingStatus');
+
+      if (recording) {
+        btn.classList.replace('bg-rose-500', 'bg-slate-800');
+        btn.classList.replace('shadow-rose-500/30', 'shadow-slate-800/30');
+        icon.classList.remove('w-6', 'h-6', 'rounded-full');
+        icon.classList.add('w-5', 'h-5', 'rounded-sm');
+        status.textContent = '錄音中... 點擊按鈕停止並分析';
+      } else {
+        btn.classList.replace('bg-slate-800', 'bg-rose-500');
+        btn.classList.replace('shadow-slate-800/30', 'shadow-rose-500/30');
+        icon.classList.remove('w-5', 'h-5', 'rounded-sm');
+        icon.classList.add('w-6', 'h-6', 'rounded-full');
+        status.textContent = '點擊按鈕開始錄音';
+      }
+    }
+
+    function setupVisualizer(stream) {
+      audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const source = audioContext.createMediaStreamSource(stream);
+      analyser = audioContext.createAnalyser();
+      analyser.fftSize = 32;
+      source.connect(analyser);
+
+      const bufferLength = analyser.frequencyBinCount;
+      const dataArray = new Uint8Array(bufferLength);
+      const bars = document.querySelectorAll('.wave-bar');
+
+      function draw() {
+        if (!isRecording) return;
+        animFrameId = requestAnimationFrame(draw);
+        analyser.getByteFrequencyData(dataArray);
+
+        bars.forEach((bar, index) => {
+          const val = dataArray[index % bufferLength] || 10;
+          const h = Math.max(6, (val / 255) * 32);
+          bar.style.height = `${h}px`;
+          bar.classList.replace('bg-slate-300', 'bg-rose-500');
+        });
+      }
+      draw();
+    }
+
+    function stopVisualizer() {
+      if (animFrameId) cancelAnimationFrame(animFrameId);
+      if (audioContext) audioContext.close();
+      document.querySelectorAll('.wave-bar').forEach(bar => {
+        bar.style.height = '8px';
+        bar.classList.replace('bg-rose-500', 'bg-slate-300');
+      });
+    }
+
+    async function requestWakeLock() {
+      if ('wakeLock' in navigator) {
+        try { wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
+      }
+    }
+
+    function releaseWakeLock() {
+      if (wakeLock) { wakeLock.release(); wakeLock = null; }
+    }
+
+    function switchTab(tab) {
+      const summaryBtn = document.getElementById('tabSummary');
+      const transcriptBtn = document.getElementById('tabTranscript');
+      const summaryBox = document.getElementById('summaryContent');
+      const transcriptBox = document.getElementById('transcriptContent');
+
+      if (tab === 'summary') {
+        summaryBtn.className = 'flex-1 py-3 text-sm font-semibold text-indigo-600 border-b-2 border-indigo-600';
+        transcriptBtn.className = 'flex-1 py-3 text-sm font-semibold text-slate-500 border-b-2 border-transparent hover:text-slate-700';
+        summaryBox.classList.remove('hidden');
+        transcriptBox.classList.add('hidden');
+      } else {
+        transcriptBtn.className = 'flex-1 py-3 text-sm font-semibold text-indigo-600 border-b-2 border-indigo-600';
+        summaryBtn.className = 'flex-1 py-3 text-sm font-semibold text-slate-500 border-b-2 border-transparent hover:text-slate-700';
+        transcriptBox.classList.remove('hidden');
+        summaryBox.classList.add('hidden');
+      }
+    }
+
+    // --- 介面事件綁定 ---
+    function setupUIEventListeners() {
+      document.getElementById('btnToggleRecord').addEventListener('click', toggleRecording);
+      document.getElementById('templateSelect').addEventListener('change', onTemplateChange);
+
+      document.getElementById('tabSummary').addEventListener('click', () => switchTab('summary'));
+      document.getElementById('tabTranscript').addEventListener('click', () => switchTab('transcript'));
+
+      // 複製與下載
+      document.getElementById('btnCopyResult').addEventListener('click', () => {
+        const text = `## 摘要\n\n${fullFinalResponse.summary}\n\n## 逐字稿\n\n${fullFinalResponse.transcript}`;
+        navigator.clipboard.writeText(text).then(() => alert('已複製全文至剪貼簿！'));
+      });
+
+      document.getElementById('btnDownloadMd').addEventListener('click', () => {
+        const text = `# 語音筆記紀錄\n\n## 結構化摘要\n\n${fullFinalResponse.summary}\n\n## 逐字稿\n\n${fullFinalResponse.transcript}`;
+        const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `語音紀錄_${new Date().toISOString().slice(0,10)}.md`;
+        a.click();
+        URL.revokeObjectURL(url);
+      });
+
+      // API Modal
+      document.getElementById('btnOpenSettings').addEventListener('click', openSettingsModal);
+      document.getElementById('btnCloseSettings').addEventListener('click', closeSettingsModal);
+      document.getElementById('btnSaveApiKey').addEventListener('click', () => {
+        const key = document.getElementById('apiKeyInput').value.trim();
+        if (key) {
+          localStorage.setItem('gemini_api_key', key);
+          closeSettingsModal();
+        }
+      });
+
+      // 範本管理 Modal
+      document.getElementById('btnOpenTemplates').addEventListener('click', openTemplateModal);
+      document.getElementById('btnCloseTemplateModal').addEventListener('click', () => {
+        document.getElementById('templateModal').classList.add('hidden');
+      });
+      document.getElementById('modalTemplateSelect').addEventListener('change', onModalTemplateChange);
+      document.getElementById('btnSaveTemplate').addEventListener('click', saveCurrentModalTemplate);
+      document.getElementById('btnNewTemplate').addEventListener('click', createNewTemplate);
+      document.getElementById('btnDeleteTemplate').addEventListener('click', deleteCurrentTemplate);
+      document.getElementById('btnResetDefaults').addEventListener('click', resetDefaultTemplates);
+    }
+
+    function checkApiKeyPrompt() {
+      if (!localStorage.getItem('gemini_api_key')) {
+        setTimeout(openSettingsModal, 600);
+      }
+    }
+
+    function openSettingsModal() {
+      document.getElementById('apiKeyInput').value = localStorage.getItem('gemini_api_key') || '';
+      document.getElementById('settingsModal').classList.remove('hidden');
+    }
+
+    function closeSettingsModal() {
+      document.getElementById('settingsModal').classList.add('hidden');
+    }
+
+    // --- 範本編輯器視窗邏輯 ---
+    function openTemplateModal() {
+      const modalSelect = document.getElementById('modalTemplateSelect');
+      modalSelect.innerHTML = '';
+      templates.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = t.id;
+        opt.textContent = t.name + (t.isDefault ? ' (預設)' : '');
+        modalSelect.appendChild(opt);
+      });
+      modalSelect.value = document.getElementById('templateSelect').value;
+      onModalTemplateChange();
+      document.getElementById('templateModal').classList.remove('hidden');
+    }
+
+    function onModalTemplateChange() {
+      const id = document.getElementById('modalTemplateSelect').value;
+      const t = templates.find(item => item.id === id);
+      if (t) {
+        document.getElementById('tplNameInput').value = t.name;
+        document.getElementById('tplSpeakerInput').value = t.speakerHint || '';
+        document.getElementById('tplPromptInput').value = t.prompt;
+        document.getElementById('btnDeleteTemplate').disabled = !!t.isDefault;
+        document.getElementById('btnDeleteTemplate').style.opacity = t.isDefault ? '0.4' : '1';
+      }
+    }
+
+    function saveCurrentModalTemplate() {
+      const id = document.getElementById('modalTemplateSelect').value;
+      const t = templates.find(item => item.id === id);
+      if (t) {
+        t.name = document.getElementById('tplNameInput').value.trim() || '未命名範本';
+        t.speakerHint = document.getElementById('tplSpeakerInput').value.trim();
+        t.prompt = document.getElementById('tplPromptInput').value.trim();
+        saveTemplates();
+        renderTemplateDropdown();
+        alert('範本已成功更新！');
+      }
+    }
+
+    function createNewTemplate() {
+      const newId = 'custom_' + Date.now();
+      const newTpl = {
+        id: newId,
+        name: "自訂新範本",
+        isDefault: false,
+        speakerHint: "說話者A=...，說話者B=...",
+        prompt: "### 【自訂結構摘要】\n- 重點事項：\n- 待辦事項："
+      };
+      templates.push(newTpl);
+      saveTemplates();
+      renderTemplateDropdown();
+      openTemplateModal();
+      document.getElementById('modalTemplateSelect').value = newId;
+      onModalTemplateChange();
+    }
+
+    function deleteCurrentTemplate() {
+      const id = document.getElementById('modalTemplateSelect').value;
+      const t = templates.find(item => item.id === id);
+      if (t && t.isDefault) {
+        alert('預設範本無法刪除。');
+        return;
+      }
+      if (confirm('確定要刪除此範本嗎？')) {
+        templates = templates.filter(item => item.id !== id);
+        saveTemplates();
+        renderTemplateDropdown();
+        openTemplateModal();
+      }
+    }
+
+    function resetDefaultTemplates() {
+      if (confirm('確定要還原原廠三大預設範本嗎？現有自訂修改將被重置。')) {
+        templates = [...DEFAULT_TEMPLATES];
+        saveTemplates();
+        renderTemplateDropdown();
+        openTemplateModal();
+      }
+    }
+  </script>
+</body>
+</html>
