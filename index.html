@@ -220,7 +220,7 @@
         <div class="grid grid-cols-2 gap-2">
           <div>
             <label class="block text-xs font-semibold text-slate-500 mb-1">Tenant</label>
-            <input type="text" id="odTenantInput" placeholder="common" class="w-full bg-slate-50 border border-slate-300 text-sm rounded-xl p-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+            <input type="text" id="odTenantInput" placeholder="consumers" class="w-full bg-slate-50 border border-slate-300 text-sm rounded-xl p-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none">
           </div>
           <div>
             <label class="block text-xs font-semibold text-slate-500 mb-1">資料夾</label>
@@ -231,12 +231,15 @@
           <input type="checkbox" id="odAutoInput" class="rounded"> 錄音結束後自動上傳 MP3 與文字
         </label>
         <p class="text-[10px] text-slate-400 leading-relaxed">
-          Entra 應用程式註冊：平台選「單頁應用程式 (SPA)」，Redirect URI 填 <span id="odRedirectHint" class="font-mono break-all"></span>，委派權限 Files.ReadWrite、offline_access。個人帳號 tenant 用 consumers，院內 M365 填組織 tenant ID。
+          Azure 應用程式註冊：「支援的帳戶類型」須包含<b>個人 Microsoft 帳戶</b>；驗證 → 新增平台選「單頁應用程式 (SPA)」，Redirect URI 填 <span id="odRedirectHint" class="font-mono break-all"></span>；API 權限加 Files.ReadWrite、offline_access。Tenant：個人帳號留空（consumers），院內 M365 填組織 tenant ID。授權每 24 小時需重新連結一次（Microsoft 對網頁 App 的限制）。
         </p>
         <div class="flex gap-2">
           <button id="btnOdConnect" class="flex-1 px-3 py-1.5 bg-sky-600 text-white text-xs font-medium rounded-lg">連結 OneDrive</button>
-          <button id="btnOdDisconnect" class="px-3 py-1.5 bg-slate-100 text-slate-600 text-xs rounded-lg border border-slate-300">中斷連結</button>
+          <button id="btnOdTest" class="px-3 py-1.5 bg-white text-sky-700 text-xs rounded-lg border border-sky-300">測試連線</button>
+          <button id="btnOdDisconnect" class="px-3 py-1.5 bg-slate-100 text-slate-600 text-xs rounded-lg border border-slate-300">中斷</button>
         </div>
+        <p id="odErrorText" class="hidden text-[11px] text-rose-600 bg-rose-50 rounded-lg p-2 whitespace-pre-wrap break-words"></p>
+        <p id="odTestOutput" class="hidden"></p>
       </div>
 
       <div class="border-t border-slate-200 pt-4 space-y-2">
@@ -259,10 +262,55 @@
     const DEFAULT_TEMPLATES = [
       {
         id: "clinic",
-        name: "醫療諮詢與門診病歷 (SOAP)",
+        name: "English Outpatient Clinic Note",
         isDefault: true,
-        speakerHint: "男聲=醫師，女聲=病患（或家屬）",
-        prompt: `### 【門診諮詢病歷摘要 (Clinic Summary)】\n- 主訴 (Chief Complaint, CC)：[病患就醫主要原因、發作時間與部位]\n- 現病史 (History of Present Illness, HPI)：\n  * 症狀特徵與變化進程：[誘發/緩解因子、嚴重度變化]\n  * 目前用藥與過敏史：[提及之西藥、中藥、保健品或藥物過敏史，無則註明「無提及」]\n- 醫病對話與病患顧慮：\n  * 病患主要擔憂：[關心的生活影響、疑慮或預後問題]\n- 醫師評估與診斷方向 (Assessment)：\n  * 臨床初步印象：[醫師提出的可能診斷或鑑別方向]\n- 處置計畫與衛教事項 (Plan)：\n  * 檢驗/檢查開立：[安排之抽血、影像或生理檢查]\n  * 處方與治療調整：[開立藥物、劑量調整或非藥物處置]\n  * 衛教與生活型態建議：[飲食、運動、生活注意事項]\n  * 回診追蹤時間：[預計回診時間或需立即就醫的危險徵兆 (Red flags)]`
+        speakerHint: "Doctor = 男聲；Patient / family = 女聲",
+        prompt: `[Documentation rules — follow these, do not print this block]
+- Write the entire note in concise, professional English clinical style using standard abbreviations (e.g., HTN, DM, CKD, SOB, PRN, BID, NKDA).
+- Translate Mandarin / Taiwanese / Hakka speech into precise English medical terminology. Keep drug names as spoken (generic or brand) with dose, route and frequency.
+- Document ONLY what is explicitly stated in the audio. Never infer vital signs, exam findings, results or diagnoses. If an item was not discussed, write "Not discussed".
+- Include pertinent negatives only when explicitly stated. Mark inaudible or ambiguous content as [unclear].
+- Distinguish patient-reported information from clinician statements where it matters.
+
+### OUTPATIENT CLINIC NOTE
+
+**Chief Complaint (CC):** [Main reason for visit, with duration]
+
+**History of Present Illness (HPI):**
+[Narrative paragraph — age/sex if stated; onset, location, duration, character, aggravating/alleviating factors, radiation, timing, severity; associated symptoms; prior work-up and treatment; interval course since last visit]
+
+**Past Medical History (PMH):** [...]
+**Past Surgical History (PSH):** [...]
+**Medications:**
+- [Drug] [dose] [route] [frequency] (include supplements / TCM if mentioned)
+
+**Allergies:** [Agent — reaction] / NKDA (only if stated)
+**Family History (FHx):** [...]
+**Social History (SHx):** [Tobacco, alcohol, occupation, living situation, functional status]
+
+**Review of Systems (ROS):** [Pertinent positives and negatives explicitly stated]
+
+**Physical Examination:** [Vital signs and findings only as verbalized during the visit]
+
+**Data Reviewed:** [Laboratory, imaging, nuclear medicine, pathology or other results discussed — with dates and key values]
+
+**Assessment:**
+1. [Problem / diagnosis] — [status: new / stable / improving / worsening; key supporting findings]
+   - DDx: [Differential diagnoses mentioned by the clinician]
+
+**Plan:**
+1. [Problem]
+   - Diagnostics: [Tests / imaging ordered]
+   - Therapeutics: [New / changed / discontinued medications with dose; non-pharmacological measures]
+   - Counseling / Education: [...]
+   - Referral: [...]
+
+**Patient Concerns & Shared Decision-Making:** [Questions raised, preferences, risks/benefits discussed]
+
+**Follow-up:** [Return interval; red-flag / return precautions given]
+
+**Suggested ICD-10-CM (reference only — verify before use):**
+- [Code] — [Description]`
       },
       {
         id: "meeting",
@@ -279,6 +327,9 @@
         prompt: `### 【演講紀實】\n- 演講主題：[完整主題]\n- 主持人引言亮點：[講者特色、開場點出的核心問題]\n- 講者核心論點精華：\n  1. [論點 1：核心主張與背景]\n  2. [論點 2：實務案例或關鍵方法]\n  3. [論點 3：未來趨勢或前瞻展望]\n- 講者經典金句摘錄：\n  * 「[演講中令人印象深刻的原句]」\n\n---\n\n### 【臉書社群文案（可直接複製發布）】\n【標題：用一句具衝擊力的話吸引受眾】\n\n今天在聽這場演講時，講者點出幾個關鍵洞見，整理給大家：\n\n📌 [重點一小標題]\n[簡述核心邏輯，好吸收的口語化表達]\n\n📌 [重點二小標題]\n[簡述核心邏輯，好吸收的口語化表達]\n\n💡 講者最震撼的一句話：\n「[金句摘錄]」\n\n#演講筆記 #知識萃取 #專業洞察`
       }
     ];
+
+    // 舊版預設門診範本：若使用者未修改過，載入時自動升級為新版
+    const LEGACY_CLINIC_PROMPT = `### 【門診諮詢病歷摘要 (Clinic Summary)】\n- 主訴 (Chief Complaint, CC)：[病患就醫主要原因、發作時間與部位]\n- 現病史 (History of Present Illness, HPI)：\n  * 症狀特徵與變化進程：[誘發/緩解因子、嚴重度變化]\n  * 目前用藥與過敏史：[提及之西藥、中藥、保健品或藥物過敏史，無則註明「無提及」]\n- 醫病對話與病患顧慮：\n  * 病患主要擔憂：[關心的生活影響、疑慮或預後問題]\n- 醫師評估與診斷方向 (Assessment)：\n  * 臨床初步印象：[醫師提出的可能診斷或鑑別方向]\n- 處置計畫與衛教事項 (Plan)：\n  * 檢驗/檢查開立：[安排之抽血、影像或生理檢查]\n  * 處方與治療調整：[開立藥物、劑量調整或非藥物處置]\n  * 衛教與生活型態建議：[飲食、運動、生活注意事項]\n  * 回診追蹤時間：[預計回診時間或需立即就醫的危險徵兆 (Red flags)]`;
 
     let templates = [];
     let mediaRecorder = null;
@@ -325,6 +376,7 @@
       await recoverInterruptedRecordings();
       renderHistory();
       requestPersistentStorage();
+      warnInAppBrowser();
       checkApiKeyPrompt();
     });
 
@@ -333,6 +385,7 @@
       if (stored) {
         try {
           templates = JSON.parse(stored);
+          upgradeDefaultTemplates();
         } catch (e) {
           templates = [...DEFAULT_TEMPLATES];
         }
@@ -341,6 +394,19 @@
         saveTemplates();
       }
       renderTemplateDropdown();
+    }
+
+    function upgradeDefaultTemplates() {
+      let changed = false;
+      templates = templates.map(t => {
+        const def = DEFAULT_TEMPLATES.find(d => d.id === t.id);
+        if (def && t.isDefault && t.id === 'clinic' && t.prompt === LEGACY_CLINIC_PROMPT) {
+          changed = true;
+          return { ...def };
+        }
+        return t;
+      });
+      if (changed) saveTemplates();
     }
 
     function saveTemplates() {
@@ -861,7 +927,7 @@
       const systemPrompt = `你是一個具備專業多語言聽力與說話者分析專長的助理。
 【原則】
 1. 事實檢查思考：嚴格依據音訊內容轉錄與摘要，切勿憑空想像。
-2. 語言處理：音訊中可能混雜國語、英語、台語、客家話。逐字稿請忠實呈現（台語客語盡量以合適漢字表達），摘要請統一以台灣正體中文歸納。
+2. 語言處理：音訊中可能混雜國語、英語、台語、客家話。逐字稿請忠實呈現（台語客語盡量以合適漢字表達），摘要語言依範本指定（範本以英文撰寫或要求英文時，摘要全程使用英文），範本未指定時以台灣正體中文歸納；逐字稿維持原語言，不要翻譯。
 3. 說話者分離：請依聲音特徵區分說話者。${speakerHint ? `參考提示：${speakerHint}` : '無特定身分時請標示「說話者 A」、「說話者 B」等。'}
 
 【輸出結構要求】
@@ -938,17 +1004,21 @@
     }
 
     // ===================== OneDrive（Microsoft Graph, OAuth2 PKCE） =====================
+    // SPA 平台的 refresh token 固定 24 小時有效（Microsoft 規定），過期需重新連結；錄音檔仍保留在本機。
+    const OD_SCOPE = 'offline_access Files.ReadWrite';
+
     function odSettings() {
       return {
-        clientId: localStorage.getItem('od_client_id') || '',
-        tenant: localStorage.getItem('od_tenant') || 'common',
+        clientId: (localStorage.getItem('od_client_id') || '').trim(),
+        tenant: (localStorage.getItem('od_tenant') || 'consumers').trim() || 'consumers',
         folder: (localStorage.getItem('od_folder') || 'VoiceNotes').replace(/^\/+|\/+$/g, ''),
         auto: localStorage.getItem('od_auto') === '1'
       };
     }
 
+    // 一律用資料夾網址（去掉 index.html），需與 Entra 註冊的 Redirect URI 完全一致
     function odRedirectUri() {
-      return location.origin + location.pathname;
+      return location.origin + location.pathname.replace(/index\.html$/, '');
     }
 
     function odGetTokens() {
@@ -959,23 +1029,53 @@
       return !!odGetTokens()?.refresh_token;
     }
 
+    function odWasLinked() {
+      return !!localStorage.getItem('od_account') || odIsConnected();
+    }
+
     function base64Url(bytes) {
       return btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
     }
 
+    // 常見 AADSTS 錯誤對照，直接告訴使用者要改哪個設定
+    function odExplainError(msg = '') {
+      const hints = [
+        ['AADSTS9002326', 'Redirect URI 的平台必須是「單頁應用程式 (SPA)」，不是「Web」'],
+        ['AADSTS50011', `Redirect URI 不一致，Entra 需註冊：${odRedirectUri()}`],
+        ['AADSTS700016', 'Client ID 錯誤，或應用程式不在此 tenant；個人帳號 tenant 請用 consumers'],
+        ['AADSTS50020', '此帳號類型不被允許：應用程式「支援的帳戶類型」需包含個人 Microsoft 帳戶'],
+        ['AADSTS50194', '應用程式設為單一租用戶：請改為支援個人 Microsoft 帳戶，tenant 用 consumers'],
+        ['unauthorized_client', '應用程式未啟用個人帳戶：「支援的帳戶類型」需包含個人 Microsoft 帳戶'],
+        ['AADSTS65001', '尚未同意權限，請重新連結並按「接受」'],
+        ['AADSTS70000', '授權碼已失效，請重新連結'],
+        ['AADSTS700084', '已超過 24 小時，請重新連結'],
+        ['invalid_grant', '授權已失效，請重新連結'],
+        ['invalid_request', '請求參數錯誤，請確認 Client ID 與 tenant']
+      ];
+      const hit = hints.find(([code]) => msg.includes(code));
+      return hit ? `${hit[1]}\n\n（${msg.split('\n')[0].slice(0, 200)}）` : msg;
+    }
+
+    function odSetError(msg) {
+      if (msg) localStorage.setItem('od_last_error', msg); else localStorage.removeItem('od_last_error');
+      if (!document.getElementById('settingsModal').classList.contains('hidden')) updateOdStatus();
+    }
+
     async function odConnect() {
       const { clientId, tenant } = odSettings();
-      if (!clientId) { alert('請先填入 OneDrive Client ID 並儲存設定'); return; }
+      if (!clientId) { alert('請先填入 OneDrive Client ID'); return; }
       const verifier = base64Url(crypto.getRandomValues(new Uint8Array(48)));
       const challenge = base64Url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
       const state = base64Url(crypto.getRandomValues(new Uint8Array(16)));
-      sessionStorage.setItem('od_pkce', JSON.stringify({ verifier, state }));
+      // 用 localStorage 而非 sessionStorage：iOS 從 Microsoft 登入頁返回時可能是新的分頁
+      localStorage.setItem('od_pkce', JSON.stringify({ verifier, state, at: Date.now() }));
       const params = new URLSearchParams({
         client_id: clientId,
         response_type: 'code',
         redirect_uri: odRedirectUri(),
         response_mode: 'query',
-        scope: 'offline_access Files.ReadWrite',
+        scope: OD_SCOPE,
+        prompt: 'select_account',
         code_challenge: challenge,
         code_challenge_method: 'S256',
         state
@@ -986,16 +1086,20 @@
     async function handleOneDriveRedirect() {
       const params = new URLSearchParams(location.search);
       if (!params.has('code') && !params.has('error')) return;
-      const pkce = JSON.parse(sessionStorage.getItem('od_pkce') || 'null');
-      sessionStorage.removeItem('od_pkce');
+      const pkce = JSON.parse(localStorage.getItem('od_pkce') || 'null');
+      localStorage.removeItem('od_pkce');
       history.replaceState(null, '', odRedirectUri());
 
       if (params.has('error')) {
-        alert(`OneDrive 授權失敗：${params.get('error_description') || params.get('error')}`);
+        const msg = `${params.get('error')}: ${params.get('error_description') || ''}`;
+        odSetError(odExplainError(msg));
+        alert(`OneDrive 授權失敗：\n${odExplainError(msg)}`);
         return;
       }
       if (!pkce || pkce.state !== params.get('state')) {
-        alert('OneDrive 授權狀態不符，請重新連結');
+        const msg = '授權狀態不符：開始連結與返回的頁面不同（例如從主畫面 App 開始、卻回到 Safari）。請在同一個地方重新按「連結 OneDrive」。';
+        odSetError(msg);
+        alert(msg);
         return;
       }
       try {
@@ -1005,9 +1109,12 @@
           redirect_uri: odRedirectUri(),
           code_verifier: pkce.verifier
         });
-        toast('OneDrive 已連結');
+        odSetError('');
+        const info = await odTestConnection({ silent: true });
+        toast(`OneDrive 已連結${info ? '：' + info : ''}`);
       } catch (e) {
-        alert(`OneDrive 取得權杖失敗：${e.message}`);
+        odSetError(odExplainError(e.message));
+        alert(`OneDrive 取得權杖失敗：\n${odExplainError(e.message)}`);
       }
     }
 
@@ -1016,10 +1123,14 @@
       const res = await fetch(`https://login.microsoftonline.com/${encodeURIComponent(tenant)}/oauth2/v2.0/token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ client_id: clientId, scope: 'offline_access Files.ReadWrite', ...body })
+        body: new URLSearchParams({ client_id: clientId, scope: OD_SCOPE, ...body })
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error_description || data.error || `HTTP ${res.status}`);
+      if (!res.ok) {
+        const err = new Error(`${data.error || 'HTTP ' + res.status}: ${data.error_description || ''}`);
+        err.code = data.error;
+        throw err;
+      }
       localStorage.setItem('od_tokens', JSON.stringify({
         access_token: data.access_token,
         refresh_token: data.refresh_token,
@@ -1030,13 +1141,50 @@
 
     async function odAccessToken() {
       const t = odGetTokens();
-      if (!t?.refresh_token) throw new Error('尚未連結 OneDrive');
+      if (!t?.refresh_token) throw new Error(odWasLinked() ? 'OneDrive 授權已過期（每 24 小時需重新連結），請到設定按「連結 OneDrive」' : '尚未連結 OneDrive');
       if (t.access_token && Date.now() < t.expires_at) return t.access_token;
       try {
         return await odTokenRequest({ grant_type: 'refresh_token', refresh_token: t.refresh_token });
       } catch (e) {
-        localStorage.removeItem('od_tokens');
-        throw new Error(`OneDrive 授權已過期，請重新連結（${e.message}）`);
+        // 只有授權失效才清除；網路錯誤保留，下次再試
+        if (['invalid_grant', 'interaction_required', 'invalid_client', 'unauthorized_client'].includes(e.code)) {
+          localStorage.removeItem('od_tokens');
+          odSetError(odExplainError(e.message));
+          throw new Error('OneDrive 授權已過期（每 24 小時需重新連結），請到設定按「連結 OneDrive」');
+        }
+        throw new Error(`OneDrive 連線失敗：${e.message}`);
+      }
+    }
+
+    // 讀取帳號與空間，並上傳一個小測試檔，確認寫入權限
+    async function odTestConnection({ silent = false } = {}) {
+      const out = document.getElementById('odTestOutput');
+      const show = (text, ok) => {
+        if (silent) return;
+        out.classList.remove('hidden');
+        out.className = `text-[11px] rounded-lg p-2 whitespace-pre-wrap break-words ${ok ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-600'}`;
+        out.textContent = text;
+      };
+      try {
+        show('測試中...', true);
+        const token = await odAccessToken();
+        const res = await fetch('https://graph.microsoft.com/v1.0/me/drive?$select=driveType,owner,quota', { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) throw new Error(`讀取 OneDrive 失敗 (HTTP ${res.status})`);
+        const drive = await res.json();
+        const who = drive.owner?.user?.email || drive.owner?.user?.displayName || '未知帳號';
+        localStorage.setItem('od_account', who);
+        const name = `_連線測試_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.txt`;
+        await odUpload(name, new Blob([`voice-notes 連線測試 ${new Date().toLocaleString('zh-TW')}`], { type: 'text/plain' }));
+        const used = drive.quota ? `，已用 ${formatBytes(drive.quota.used)} / ${formatBytes(drive.quota.total)}` : '';
+        const info = `${who}（${drive.driveType === 'personal' ? '個人' : drive.driveType}${used}）`;
+        odSetError('');
+        show(`✅ 連線正常：${info}\n已在「${odSettings().folder}」資料夾建立測試檔 ${name}，可到 OneDrive App 確認後刪除。`, true);
+        updateOdStatus();
+        return info;
+      } catch (e) {
+        show(`❌ ${e.message}`, false);
+        if (silent) throw e;
+        return null;
       }
     }
 
@@ -1164,7 +1312,7 @@
           if (rec.status !== 'processing') addBtn(rec.status === 'done' ? '🔁 重新分析' : '🔁 重試分析', () => processRecording(rec.id), rec.status !== 'done');
           addBtn('⬇️ 音檔', () => downloadAudio(rec.id));
           addBtn('⬇️ 文字', () => downloadText(rec.id));
-          if (odIsConnected()) addBtn('☁️ 上傳', () => backupToCloud(rec.id));
+          if (odWasLinked()) addBtn('☁️ 上傳', () => backupToCloud(rec.id));
           if (rec.status !== 'processing') addBtn('🗑️', () => removeRecording(rec.id));
           li.appendChild(actions);
         }
@@ -1308,6 +1456,14 @@
         btn.disabled = false;
         document.getElementById('btnCopyDiag').classList.remove('hidden');
       }
+    }
+
+    // 在 LINE、team+ 等 App 的內建瀏覽器中開啟時，麥克風、本機儲存與 Microsoft 登入都可能異常
+    function warnInAppBrowser() {
+      const ua = navigator.userAgent;
+      const isIOS = /iPhone|iPad|iPod/.test(ua);
+      const inApp = /Line\/|FBAN|FBAV|Instagram|MicroMessenger|team\+|Teamplus/i.test(ua) || (isIOS && !/Safari\//.test(ua) && !navigator.standalone);
+      if (inApp && !sessionStorage.getItem('inapp_warned')) sessionStorage.setItem('inapp_warned', '1'), alert('偵測到你在 App 的內建瀏覽器中開啟（例如 team+、LINE）。\n錄音、暫存與 OneDrive 登入可能無法正常運作，請點右上角選單改用 Safari 開啟，並「加入主畫面」。');
     }
 
     // ===================== 工具函式 =====================
@@ -1499,8 +1655,13 @@
       document.getElementById('btnCopyDiag').addEventListener('click', () => {
         navigator.clipboard.writeText(document.getElementById('diagOutput').innerText).then(() => toast('已複製檢測結果'));
       });
+      document.getElementById('btnOdTest').addEventListener('click', () => {
+        saveSettingsFromForm();
+        odTestConnection();
+      });
       document.getElementById('btnOdDisconnect').addEventListener('click', () => {
-        localStorage.removeItem('od_tokens');
+        ['od_tokens', 'od_account', 'od_last_error'].forEach(k => localStorage.removeItem(k));
+        document.getElementById('odTestOutput').classList.add('hidden');
         updateOdStatus();
         renderHistory();
       });
@@ -1551,14 +1712,19 @@
       setOrRemove('od_tenant', tenant);
       setOrRemove('od_folder', document.getElementById('odFolderInput').value.trim());
       localStorage.setItem('od_auto', document.getElementById('odAutoInput').checked ? '1' : '0');
-      if (clientId !== prevClient || tenant !== prevTenant) localStorage.removeItem('od_tokens');
+      if (clientId !== prevClient || tenant !== prevTenant) ['od_tokens', 'od_account', 'od_last_error'].forEach(k => localStorage.removeItem(k));
     }
 
     function updateOdStatus() {
       const el = document.getElementById('odStatus');
       const connected = odIsConnected();
-      el.textContent = connected ? '✅ 已連結' : '未連結';
-      el.className = `text-[10px] ${connected ? 'text-emerald-600' : 'text-slate-400'}`;
+      const account = localStorage.getItem('od_account');
+      el.textContent = connected ? `✅ 已連結${account ? '：' + account : ''}` : (odWasLinked() ? '⚠️ 授權過期，請重新連結' : '未連結');
+      el.className = `text-[10px] ${connected ? 'text-emerald-600' : odWasLinked() ? 'text-amber-600' : 'text-slate-400'}`;
+      const err = localStorage.getItem('od_last_error');
+      const errEl = document.getElementById('odErrorText');
+      errEl.textContent = err ? `上次錯誤：${err}` : '';
+      errEl.classList.toggle('hidden', !err);
     }
 
     function closeSettingsModal() {
